@@ -236,53 +236,63 @@ async def market_candles(
 
 @app.get("/market/quote")
 async def market_quote(symbol: str):
+    symbol = symbol.upper()
     api_key = os.getenv("ALPHA_VANTAGE_API_KEY")
-    if not api_key:
-        raise HTTPException(
-            status_code=503,
-            detail="Market data API key is not configured"
-        )
 
-    params = {
-        "function": "GLOBAL_QUOTE",
-        "symbol": symbol.upper(),
-        "apikey": api_key,
-    }
+    if api_key:
+        params = {
+            "function": "GLOBAL_QUOTE",
+            "symbol": symbol,
+            "apikey": api_key,
+        }
 
-    async with httpx.AsyncClient(timeout=20) as client:
-        response = await client.get(
-            "https://www.alphavantage.co/query",
-            params=params
-        )
+        try:
+            async with httpx.AsyncClient(timeout=20) as client:
+                response = await client.get(
+                    "https://www.alphavantage.co/query",
+                    params=params
+                )
 
-    if response.status_code != 200:
-        raise HTTPException(
-            status_code=502,
-            detail=f"Market quote connection failed ({response.status_code})"
-        )
+            if response.status_code == 200:
+                data = response.json()
+                quote = data.get("Global Quote", {})
+                price_raw = quote.get("05. price")
 
-    data = response.json()
+                if price_raw:
+                    return {
+                        "symbol": symbol,
+                        "price": float(price_raw),
+                        "latest_trading_day": quote.get(
+                            "07. latest trading day", ""
+                        ),
+                        "source": "live"
+                    }
+        except (httpx.HTTPError, ValueError):
+            pass
 
-    if "Error Message" in data:
-        raise HTTPException(status_code=502, detail=data["Error Message"])
+    # Fallback to the latest cached daily candle.
+    cache_file = CACHE_DIR / f"{symbol}_compact.json"
 
-    if "Note" in data:
-        raise HTTPException(status_code=429, detail=data["Note"])
+    if cache_file.exists():
+        try:
+            cached = json.loads(cache_file.read_text())
+            candles = cached.get("candles", [])
 
-    quote = data.get("Global Quote", {})
-    price_raw = quote.get("05. price")
+            if candles:
+                latest = candles[-1]
+                return {
+                    "symbol": symbol,
+                    "price": float(latest["close"]),
+                    "latest_trading_day": latest.get("time", ""),
+                    "source": "cached"
+                }
+        except (OSError, json.JSONDecodeError, KeyError, ValueError):
+            pass
 
-    if not price_raw:
-        raise HTTPException(
-            status_code=502,
-            detail="No current quote returned"
-        )
-
-    return {
-        "symbol": symbol.upper(),
-        "price": float(price_raw),
-        "latest_trading_day": quote.get("07. latest trading day", ""),
-    }
+    raise HTTPException(
+        status_code=502,
+        detail="No live or cached quote available"
+    )
 
 
 from strategy import analyse
