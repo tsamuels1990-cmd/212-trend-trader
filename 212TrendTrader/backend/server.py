@@ -432,9 +432,14 @@ async def scanner_scan(symbols: str = "",
 
                     failed_symbols = {}
                     if ALPHA_FAILED_FILE.exists():
-                        failed_symbols = set(
-                            json.loads(ALPHA_FAILED_FILE.read_text())
-                        )
+                        loaded_failed_symbols = json.loads(ALPHA_FAILED_FILE.read_text())
+                        if isinstance(loaded_failed_symbols, dict):
+                            failed_symbols = loaded_failed_symbols
+                        elif isinstance(loaded_failed_symbols, list):
+                            failed_symbols = {
+                                item: datetime.utcnow().isoformat()
+                                for item in loaded_failed_symbols
+                            }
 
                     failed_symbols[symbol] = datetime.utcnow().isoformat()
                     ALPHA_FAILED_FILE.write_text(
