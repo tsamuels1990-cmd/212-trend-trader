@@ -330,6 +330,210 @@ async def trading212_us_stock_universe():
     ]
 
 
+CACHE_WARM_TASK = None
+
+
+def load_alpha_failed_symbols():
+    try:
+        if not ALPHA_FAILED_FILE.exists():
+            return {}
+
+        data = json.loads(ALPHA_FAILED_FILE.read_text())
+
+        if isinstance(data, dict):
+            return data
+
+        if isinstance(data, list):
+            now = datetime.utcnow().isoformat()
+            return {symbol: now for symbol in data}
+
+    except (OSError, json.JSONDecodeError):
+        pass
+
+    return {}
+
+
+def save_alpha_failed_symbols(data):
+    try:
+        CACHE_DIR.mkdir(parents=True, exist_ok=True)
+        ALPHA_FAILED_FILE.write_text(json.dumps(data, indent=2))
+    except OSError:
+        pass
+
+
+def alpha_failure_is_recent(symbol):
+    failed = load_alpha_failed_symbols()
+    timestamp = failed.get(symbol.upper())
+
+    if not timestamp:
+        return False
+
+    try:
+        failed_at = datetime.fromisoformat(timestamp)
+        return (
+            datetime.utcnow() - failed_at
+            < timedelta(hours=ALPHA_FAILED_RETRY_HOURS)
+        )
+    except (TypeError, ValueError):
+        return False
+
+
+def load_cache_warm_state():
+    today = datetime.utcnow().date().isoformat()
+
+    state = {
+        "date": today,
+        "requests_today": 0,
+        "cursor": 0,
+    }
+
+    try:
+        if CACHE_WARM_STATE_FILE.exists():
+            loaded = json.loads(CACHE_WARM_STATE_FILE.read_text())
+
+            if isinstance(loaded, dict):
+                state.update(loaded)
+
+    except (OSError, json.JSONDecodeError):
+        pass
+
+    if state.get("date") != today:
+        state["date"] = today
+        state["requests_today"] = 0
+
+    return state
+
+
+def save_cache_warm_state(state):
+    try:
+        CACHE_DIR.mkdir(parents=True, exist_ok=True)
+        CACHE_WARM_STATE_FILE.write_text(
+            json.dumps(state, indent=2)
+        )
+    except OSError:
+        pass
+
+
+async def cache_warm_loop():
+    # Give the API time to finish starting before background work begins.
+    await asyncio.sleep(10)
+
+    while True:
+        try:
+            state = load_cache_warm_state()
+
+            if state["requests_today"] >= CACHE_WARM_DAILY_LIMIT:
+                await asyncio.sleep(CACHE_WARM_INTERVAL_SECONDS)
+                continue
+
+            universe = await trading212_us_stock_universe()
+
+            if not universe:
+                await asyncio.sleep(CACHE_WARM_INTERVAL_SECONDS)
+                continue
+
+            start = int(state.get("cursor", 0)) % len(universe)
+            selected = None
+            selected_index = None
+
+            for offset in range(len(universe)):
+                index = (start + offset) % len(universe)
+                symbol = universe[index].upper()
+
+                cache_file = CACHE_DIR / f"{symbol}_compact.json"
+
+                cache_is_fresh = (
+                    cache_file.exists()
+                    and (
+                        datetime.now().timestamp()
+                        - cache_file.stat().st_mtime
+                    ) < CACHE_MINUTES * 60
+                )
+
+                if cache_is_fresh:
+                    continue
+
+                if alpha_failure_is_recent(symbol):
+                    continue
+
+                selected = symbol
+                selected_index = index
+                break
+
+            if selected is None:
+                await asyncio.sleep(CACHE_WARM_INTERVAL_SECONDS)
+                continue
+
+            state["cursor"] = (selected_index + 1) % len(universe)
+
+            # Count the request even when Alpha Vantage rejects the symbol,
+            # so the daily API allowance remains protected.
+            state["requests_today"] += 1
+            save_cache_warm_state(state)
+
+            try:
+                await market_candles(
+                    symbol=selected,
+                    outputsize="compact"
+                )
+
+                print(
+                    f"CACHE WARM: {selected} cached "
+                    f"({state['requests_today']}/{CACHE_WARM_DAILY_LIMIT})"
+                )
+
+            except HTTPException as exc:
+                detail = str(exc.detail)
+
+                if "no daily price data" in detail.lower():
+                    failed = load_alpha_failed_symbols()
+                    failed[selected] = datetime.utcnow().isoformat()
+                    save_alpha_failed_symbols(failed)
+
+                print(
+                    f"CACHE WARM: {selected} skipped - {detail}"
+                )
+
+        except Exception as exc:
+            print(f"CACHE WARM ERROR: {exc}")
+
+        await asyncio.sleep(CACHE_WARM_INTERVAL_SECONDS)
+
+
+@app.on_event("startup")
+async def start_cache_warmer():
+    global CACHE_WARM_TASK
+
+    if CACHE_WARM_TASK is None or CACHE_WARM_TASK.done():
+        CACHE_WARM_TASK = asyncio.create_task(cache_warm_loop())
+
+
+@app.on_event("shutdown")
+async def stop_cache_warmer():
+    global CACHE_WARM_TASK
+
+    if CACHE_WARM_TASK is not None:
+        CACHE_WARM_TASK.cancel()
+        CACHE_WARM_TASK = None
+
+
+@app.get("/cache/warm-status")
+async def cache_warm_status():
+    state = load_cache_warm_state()
+    failed = load_alpha_failed_symbols()
+
+    cached_files = list(CACHE_DIR.glob("*_compact.json"))
+
+    return {
+        "cached_symbols": len(cached_files),
+        "requests_today": state.get("requests_today", 0),
+        "daily_limit": CACHE_WARM_DAILY_LIMIT,
+        "cursor": state.get("cursor", 0),
+        "failed_symbols": len(failed),
+        "interval_seconds": CACHE_WARM_INTERVAL_SECONDS,
+    }
+
+
 @app.get("/universe/stocks")
 async def universe_stocks():
     instruments = await trading212_instruments()
