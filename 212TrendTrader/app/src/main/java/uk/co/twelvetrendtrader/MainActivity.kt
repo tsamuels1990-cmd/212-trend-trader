@@ -32,11 +32,10 @@ data class SimPosition(
 )
 
 
-private suspend fun scanBackend(universe: List<String>, minScore: Double, profitTargetPct: Double, stopLossPct: Double): List<Signal> =
+private suspend fun scanBackend(minScore: Double, profitTargetPct: Double, stopLossPct: Double): List<Signal> =
     withContext(Dispatchers.IO) {
-        val symbols = universe.joinToString(",")
         val url =
-            "https://redesigned-orbit-4qwqr959pr7ph9gv-8001.app.github.dev/scanner/scan?symbols=$symbols&min_score=$minScore&profit_target_pct=$profitTargetPct&stop_loss_pct=$stopLossPct"
+            "https://redesigned-orbit-4qwqr959pr7ph9gv-8001.app.github.dev/scanner/scan?min_score=$minScore&profit_target_pct=$profitTargetPct&stop_loss_pct=$stopLossPct"
 
         val client = OkHttpClient()
         val request = Request.Builder()
@@ -233,10 +232,8 @@ fun App() {
                             scanning = true
                             scope.launch {
                                 try {
-                                    val universe = listOf("AAPL", "MSFT", "NVDA", "AMZN", "META", "GOOGL", "AVGO", "AMD", "TSLA", "NFLX")
-                            val found = runCatching {
+                                    val found = runCatching {
                                 scanBackend(
-                                    universe,
                                     minScore.toDoubleOrNull() ?: 75.0,
                                     profitTarget.toDoubleOrNull() ?: 4.0,
                                     stopLoss.toDoubleOrNull() ?: 2.0
@@ -254,7 +251,7 @@ fun App() {
                             }
                         },
                         modifier = Modifier.fillMaxWidth()
-                    ) { Text(if (scanning) "SCANNING..." else "") }
+                    ) { Text(if (scanning) "SCANNING..." else "SCAN MARKET") }
                 }
 
                 item { Text("TOP SIGNALS", style = MaterialTheme.typography.titleLarge) }
