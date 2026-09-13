@@ -131,6 +131,30 @@ private suspend fun backendPaperSell(): JSONObject =
     }
 
 
+private suspend fun backendPaperCheck(): JSONObject =
+    withContext(Dispatchers.IO) {
+        val url =
+            "https://redesigned-orbit-4qwqr959pr7ph9gv-8001.app.github.dev/paper/check"
+
+        val request = Request.Builder()
+            .url(url)
+            .post(okhttp3.RequestBody.create(null, ByteArray(0)))
+            .build()
+
+        OkHttpClient().newCall(request).execute().use { response ->
+            if (!response.isSuccessful) {
+                val body = response.body?.string()
+                throw Exception("Paper check error: HTTP ${response.code} ${body ?: ""}")
+            }
+
+            val body = response.body?.string()
+                ?: throw Exception("Paper check returned an empty response")
+
+            JSONObject(body)
+        }
+    }
+
+
 private suspend fun backendCurrentPrice(symbol: String): Double =
     withContext(Dispatchers.IO) {
         val url =
@@ -187,26 +211,18 @@ fun App() {
             val p = positions.first()
 
             runCatching {
-                backendCurrentPrice(p.ticker)
-            }.onSuccess { current ->
-                when {
-                    current >= p.target -> {
-                        val value = p.quantity * current
-                        cash += value
-                        positions = emptyList()
-                        addLog("AUTO PAPER SELL ${p.ticker} @ ${"%.2f".format(current)} TARGET HIT")
-                    }
+                backendPaperCheck()
+            }.onSuccess { state ->
+                val backendPosition = state.optJSONObject("position")
 
-                    current <= p.stop -> {
-                        val value = p.quantity * current
-                        cash += value
-                        positions = emptyList()
-                        addLog("AUTO PAPER SELL ${p.ticker} @ ${"%.2f".format(current)} STOP HIT")
-                    }
-
-                    else -> {
-                        status = "Monitoring ${p.ticker} @ ${"%.2f".format(current)}"
-                    }
+                if (backendPosition == null) {
+                    cash = state.optDouble("cash", cash)
+                    positions = emptyList()
+                    status = "Paper position closed by backend"
+                    addLog("AUTO PAPER SELL confirmed by backend; cash £${"%.2f".format(cash)}")
+                } else {
+                    val current = backendPosition.optDouble("current_price", p.price)
+                    status = "Monitoring ${p.ticker} @ ${"%.2f".format(current)}"
                 }
             }.onFailure { e ->
                 addLog("Price monitor failed: ${e.message}")
