@@ -11,11 +11,36 @@ from fastapi import FastAPI, HTTPException
 
 app = FastAPI(title="212 Trend Trader Backend")
 
-PAPER_STATE = {
-    "cash": 1000.0,
-    "position": None,
-    "events": ["Backend paper account ready."],
-}
+PAPER_STATE_FILE = Path(__file__).resolve().parent / "paper_state.json"
+
+def default_paper_state():
+    return {
+        "cash": 1000.0,
+        "position": None,
+        "events": ["Backend paper account ready."],
+    }
+
+def load_paper_state():
+    try:
+        if PAPER_STATE_FILE.exists():
+            data = json.loads(PAPER_STATE_FILE.read_text())
+            if isinstance(data, dict) and "cash" in data and "position" in data:
+                data.setdefault("events", [])
+                return data
+    except (OSError, json.JSONDecodeError):
+        pass
+
+    return default_paper_state()
+
+def save_paper_state():
+    try:
+        temp_file = PAPER_STATE_FILE.with_suffix(".tmp")
+        temp_file.write_text(json.dumps(PAPER_STATE, indent=2))
+        temp_file.replace(PAPER_STATE_FILE)
+    except OSError as exc:
+        print(f"PAPER STATE SAVE ERROR: {exc}")
+
+PAPER_STATE = load_paper_state()
 
 
 
@@ -46,6 +71,7 @@ async def paper_buy(symbol: str, profit_target_pct: float = 4.0, stop_loss_pct: 
     PAPER_STATE["events"].append(
         f"PAPER BUY {symbol.upper()} qty {quantity:.4f} @ {price:.2f}"
     )
+    save_paper_state()
 
     return PAPER_STATE
 
@@ -69,6 +95,7 @@ async def paper_sell():
         f"PAPER SELL {position['symbol']} qty {position['quantity']:.4f} @ {current:.2f}"
     )
     PAPER_STATE["position"] = None
+    save_paper_state()
 
     return PAPER_STATE
 
@@ -98,6 +125,7 @@ async def paper_check():
         )
         PAPER_STATE["position"] = None
 
+    save_paper_state()
     return PAPER_STATE
 
 
