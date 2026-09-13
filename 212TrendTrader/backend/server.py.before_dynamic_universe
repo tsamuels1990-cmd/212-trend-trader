@@ -1,0 +1,358 @@
+from dotenv import load_dotenv
+load_dotenv()
+
+import os
+import asyncio
+import json
+from pathlib import Path
+from datetime import datetime, timedelta
+import httpx
+from fastapi import FastAPI, HTTPException
+
+app = FastAPI(title="212 Trend Trader Backend")
+
+PAPER_STATE = {
+    "cash": 1000.0,
+    "position": None,
+    "events": ["Backend paper account ready."],
+}
+
+
+
+@app.post("/paper/buy")
+async def paper_buy(symbol: str, profit_target_pct: float = 4.0, stop_loss_pct: float = 2.0):
+    if PAPER_STATE["position"] is not None:
+        raise HTTPException(status_code=400, detail="A paper position is already open")
+
+    quote = await market_quote(symbol)
+    price = float(quote["price"])
+
+    cash = float(PAPER_STATE["cash"])
+    if cash <= 0:
+        raise HTTPException(status_code=400, detail="No paper cash available")
+
+    quantity = cash / price
+
+    PAPER_STATE["position"] = {
+        "symbol": symbol.upper(),
+        "entry": price,
+        "quantity": quantity,
+        "target": price * (1.0 + profit_target_pct / 100.0),
+        "stop": price * (1.0 - stop_loss_pct / 100.0),
+        "profit_target_pct": profit_target_pct,
+        "stop_loss_pct": stop_loss_pct
+    }
+    PAPER_STATE["cash"] = 0.0
+    PAPER_STATE["events"].append(
+        f"PAPER BUY {symbol.upper()} qty {quantity:.4f} @ {price:.2f}"
+    )
+
+    return PAPER_STATE
+
+
+@app.post("/paper/check")
+async def paper_check():
+    position = PAPER_STATE["position"]
+
+    if position is None:
+        return PAPER_STATE
+
+    quote = await market_quote(position["symbol"])
+    current = float(quote["price"])
+    position["current_price"] = current
+
+    reason = None
+    if current >= position["target"]:
+        reason = "TARGET HIT"
+    elif current <= position["stop"]:
+        reason = "STOP HIT"
+
+    if reason is not None:
+        value = position["quantity"] * current
+        PAPER_STATE["cash"] = value
+        PAPER_STATE["events"].append(
+            f"AUTO PAPER SELL {position['symbol']} @ {current:.2f} {reason}"
+        )
+        PAPER_STATE["position"] = None
+
+    return PAPER_STATE
+
+
+@app.get("/paper/status")
+async def paper_status():
+    return PAPER_STATE
+
+
+@app.get("/health")
+def health():
+    return {
+        "status": "ok",
+        "live_trading_enabled": os.getenv(
+            "LIVE_TRADING_ENABLED", "false"
+        ).lower() == "true"
+    }
+
+
+@app.get("/market/candles")
+async def market_candles(
+    symbol: str,
+    interval: str = "1day",
+    outputsize: str = "compact"
+):
+    cache_key = f"{symbol.upper()}:{outputsize}"
+    cached = MARKET_CACHE.get(cache_key)
+
+    if cached:
+        age = datetime.utcnow() - cached["time"]
+        if age < timedelta(minutes=CACHE_MINUTES):
+            return cached["data"]
+
+    CACHE_DIR.mkdir(parents=True, exist_ok=True)
+    cache_file = CACHE_DIR / f"{symbol.upper()}_{outputsize}.json"
+
+    if cache_file.exists():
+        age_seconds = datetime.now().timestamp() - cache_file.stat().st_mtime
+        if age_seconds < CACHE_MINUTES * 60:
+            try:
+                disk_data = json.loads(cache_file.read_text())
+                MARKET_CACHE[cache_key] = {
+                    "time": datetime.utcnow(),
+                    "data": disk_data,
+                }
+                return disk_data
+            except (OSError, json.JSONDecodeError):
+                pass
+
+    api_key = os.getenv("ALPHA_VANTAGE_API_KEY")
+    if not api_key:
+        raise HTTPException(
+            status_code=503,
+            detail="Market data API key is not configured"
+        )
+
+    url = "https://www.alphavantage.co/query"
+    params = {
+        "function": "TIME_SERIES_DAILY",
+        "symbol": symbol,
+        "outputsize": outputsize,
+        "apikey": api_key,
+    }
+
+    async with httpx.AsyncClient(timeout=20) as client:
+        response = await client.get(url, params=params)
+
+        if response.status_code != 200:
+            raise HTTPException(
+                status_code=502,
+                detail=f"Market data connection failed ({response.status_code})"
+            )
+
+        data = response.json()
+
+    if "Error Message" in data:
+        raise HTTPException(
+            status_code=502,
+            detail=data["Error Message"]
+        )
+
+    if "Note" in data:
+        raise HTTPException(
+            status_code=429,
+            detail=data["Note"]
+        )
+
+    time_series = data.get("Time Series (Daily)")
+
+    if not time_series:
+        raise HTTPException(
+            status_code=502,
+            detail="Alpha Vantage returned no daily price data"
+        )
+
+    candles = []
+
+    for date, values in sorted(time_series.items()):
+        try:
+            candles.append({
+                "time": date,
+                "open": float(values["1. open"]),
+                "high": float(values["2. high"]),
+                "low": float(values["3. low"]),
+                "close": float(values["4. close"]),
+                "volume": float(values["5. volume"])
+            })
+        except (KeyError, ValueError):
+            continue
+
+    if not candles:
+        raise HTTPException(
+            status_code=502,
+            detail="No valid candles returned"
+        )
+
+    result = {
+        "symbol": symbol.upper(),
+        "count": len(candles),
+        "candles": candles
+    }
+
+    MARKET_CACHE[cache_key] = {
+        "time": datetime.utcnow(),
+        "data": result
+    }
+
+    try:
+        CACHE_DIR.mkdir(parents=True, exist_ok=True)
+        cache_file.write_text(json.dumps(result))
+    except OSError:
+        pass
+
+    return result
+
+
+
+@app.get("/market/quote")
+async def market_quote(symbol: str):
+    api_key = os.getenv("ALPHA_VANTAGE_API_KEY")
+    if not api_key:
+        raise HTTPException(
+            status_code=503,
+            detail="Market data API key is not configured"
+        )
+
+    params = {
+        "function": "GLOBAL_QUOTE",
+        "symbol": symbol.upper(),
+        "apikey": api_key,
+    }
+
+    async with httpx.AsyncClient(timeout=20) as client:
+        response = await client.get(
+            "https://www.alphavantage.co/query",
+            params=params
+        )
+
+    if response.status_code != 200:
+        raise HTTPException(
+            status_code=502,
+            detail=f"Market quote connection failed ({response.status_code})"
+        )
+
+    data = response.json()
+
+    if "Error Message" in data:
+        raise HTTPException(status_code=502, detail=data["Error Message"])
+
+    if "Note" in data:
+        raise HTTPException(status_code=429, detail=data["Note"])
+
+    quote = data.get("Global Quote", {})
+    price_raw = quote.get("05. price")
+
+    if not price_raw:
+        raise HTTPException(
+            status_code=502,
+            detail="No current quote returned"
+        )
+
+    return {
+        "symbol": symbol.upper(),
+        "price": float(price_raw),
+        "latest_trading_day": quote.get("07. latest trading day", ""),
+    }
+
+
+from strategy import analyse
+
+MARKET_CACHE = {}
+CACHE_MINUTES = 1440
+CACHE_DIR = Path(__file__).resolve().parent / "market_cache"
+CACHE_WARM_DAILY_LIMIT = 20
+CACHE_WARM_INTERVAL_SECONDS = 240
+CACHE_WARM_STATE_FILE = CACHE_DIR / "warm_state.json"
+
+@app.get("/strategy/analyse")
+async def strategy_analyse(symbol: str):
+    candles_response = await market_candles(
+        symbol=symbol,
+        outputsize="compact"
+    )
+
+    candles = candles_response["candles"]
+    result = analyse(candles)
+
+    return {
+        "symbol": symbol.upper(),
+        "analysis": result
+    }
+
+@app.get("/scanner/scan")
+async def scanner_scan(symbols: str = "AAPL,MSFT,NVDA,AMZN,META,GOOGL,TSLA,AVGO,AMD,NFLX,JPM,V,MA,UNH,LLY,XOM,COST,WMT,HD,PG,JNJ,ABBV,KO,PEP,CRM,ORCL,ADBE,CSCO,INTC,QCOM,TXN,AMAT,MU,IBM,GE,CAT,BA,GS,MS,BAC,CVX,COP,MCD,NKE,DIS,UBER,ABNB,PYPL,SHOP,SQ", min_score: float = 75.0, profit_target_pct: float = 4.0, stop_loss_pct: float = 2.0):
+    results = []
+    max_uncached_fetches = 5
+    uncached_fetches = 0
+
+    symbol_list = [
+        s.strip().upper()
+        for s in symbols.split(",")
+        if s.strip()
+    ]
+
+    for symbol in symbol_list:
+        try:
+            cache_file = CACHE_DIR / f"{symbol.upper()}_compact.json"
+            cache_is_fresh = (
+                cache_file.exists()
+                and (datetime.now().timestamp() - cache_file.stat().st_mtime) < CACHE_MINUTES * 60
+            )
+
+            if not cache_is_fresh:
+                if uncached_fetches >= max_uncached_fetches:
+                    results.append({
+                        "symbol": symbol,
+                        "error": "Historical cache not ready yet"
+                    })
+                    continue
+                uncached_fetches += 1
+
+            candles_response = await market_candles(
+                symbol=symbol,
+                outputsize="compact"
+            )
+
+            analysis = analyse(candles_response["candles"], min_score=min_score, profit_target_pct=profit_target_pct, stop_loss_pct=stop_loss_pct)
+
+            results.append({
+                "symbol": symbol,
+                "analysis": analysis
+            })
+
+        except HTTPException as exc:
+            results.append({
+                "symbol": symbol,
+                "error": exc.detail
+            })
+
+    results.sort(
+        key=lambda x: x.get("analysis", {}).get("score", -1),
+        reverse=True
+    )
+
+    qualified = [
+        r for r in results
+        if r.get("analysis", {}).get("qualified") is True
+    ]
+
+    unavailable = [
+        r for r in results
+        if "error" in r
+    ]
+
+    return {
+        "count": len(results),
+        "valid_count": len(results) - len(unavailable),
+        "qualified_count": len(qualified),
+        "qualified": qualified,
+        "unavailable": unavailable,
+        "results": results
+    }
