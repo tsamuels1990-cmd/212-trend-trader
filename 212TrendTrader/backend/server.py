@@ -109,13 +109,27 @@ async def paper_check():
 
     quote = await market_quote(position["symbol"])
     current = float(quote["price"])
+    quote_source = quote.get("source", "unknown")
+
     position["current_price"] = current
+    position["quote_source"] = quote_source
+    position["latest_trading_day"] = quote.get("latest_trading_day", "")
 
     reason = None
-    if current >= position["target"]:
-        reason = "TARGET HIT"
-    elif current <= position["stop"]:
-        reason = "STOP HIT"
+
+    # Cached daily closes are useful for display, but must never trigger
+    # an automatic target/stop exit because they may be stale.
+    if quote_source == "live":
+        position["monitoring_status"] = "LIVE - automatic exits enabled"
+
+        if current >= position["target"]:
+            reason = "TARGET HIT"
+        elif current <= position["stop"]:
+            reason = "STOP HIT"
+    else:
+        position["monitoring_status"] = (
+            "CACHED PRICE - automatic exits paused"
+        )
 
     if reason is not None:
         value = position["quantity"] * current
