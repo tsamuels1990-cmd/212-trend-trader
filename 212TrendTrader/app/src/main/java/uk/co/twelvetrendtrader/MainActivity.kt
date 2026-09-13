@@ -107,6 +107,30 @@ private suspend fun backendPaperBuy(
         }
     }
 
+private suspend fun backendPaperSell(): JSONObject =
+    withContext(Dispatchers.IO) {
+        val url =
+            "https://redesigned-orbit-4qwqr959pr7ph9gv-8001.app.github.dev/paper/sell"
+
+        val request = Request.Builder()
+            .url(url)
+            .post(okhttp3.RequestBody.create(null, ByteArray(0)))
+            .build()
+
+        OkHttpClient().newCall(request).execute().use { response ->
+            if (!response.isSuccessful) {
+                val body = response.body?.string()
+                throw Exception("Paper sell error: HTTP ${response.code} ${body ?: ""}")
+            }
+
+            val body = response.body?.string()
+                ?: throw Exception("Paper sell returned an empty response")
+
+            JSONObject(body)
+        }
+    }
+
+
 private suspend fun backendCurrentPrice(symbol: String): Double =
     withContext(Dispatchers.IO) {
         val url =
@@ -313,10 +337,19 @@ fun App() {
                             Text("Entry ${"%.2f".format(p.entry)} • Target ${"%.2f".format(p.target)} • Stop ${"%.2f".format(p.stop)}")
                             Text("Quantity ${"%.4f".format(p.quantity)}")
                             Button(onClick = {
-                                val value = p.quantity * p.price
-                                cash += value
-                                positions = emptyList()
-                                addLog("PAPER SELL ${p.ticker} @ ${p.price}; cash £${"%.2f".format(cash)}")
+                                scope.launch {
+                                    try {
+                                        val state = backendPaperSell()
+                                        cash = state.getDouble("cash")
+                                        positions = emptyList()
+                                        status = "Paper position closed"
+                                        addLog(
+                                            "PAPER SELL confirmed by backend; cash £${"%.2f".format(cash)}"
+                                        )
+                                    } catch (e: Exception) {
+                                        addLog("Paper sell failed: ${e.message}")
+                                    }
+                                }
                             }) { Text("PAPER SELL") }
                         }
                     }

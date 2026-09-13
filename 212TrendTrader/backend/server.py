@@ -50,6 +50,29 @@ async def paper_buy(symbol: str, profit_target_pct: float = 4.0, stop_loss_pct: 
     return PAPER_STATE
 
 
+@app.post("/paper/sell")
+async def paper_sell():
+    position = PAPER_STATE["position"]
+
+    if position is None:
+        raise HTTPException(
+            status_code=400,
+            detail="No paper position is open"
+        )
+
+    quote = await market_quote(position["symbol"])
+    current = float(quote["price"])
+    value = position["quantity"] * current
+
+    PAPER_STATE["cash"] = value
+    PAPER_STATE["events"].append(
+        f"PAPER SELL {position['symbol']} qty {position['quantity']:.4f} @ {current:.2f}"
+    )
+    PAPER_STATE["position"] = None
+
+    return PAPER_STATE
+
+
 @app.post("/paper/check")
 async def paper_check():
     position = PAPER_STATE["position"]
