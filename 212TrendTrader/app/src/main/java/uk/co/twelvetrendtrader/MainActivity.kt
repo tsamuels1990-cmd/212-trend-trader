@@ -424,6 +424,17 @@ fun App() {
                                 Text("Current: ${"%.2f".format(p.currentPrice)}")
                                 Text("Average paid: ${"%.2f".format(p.averagePrice)}")
                                 Text("Quantity: ${"%.4f".format(p.quantity)}")
+
+                                val gainLoss = (p.currentPrice - p.averagePrice) * p.quantity
+                                val gainLossPct =
+                                    if (p.averagePrice > 0.0)
+                                        ((p.currentPrice - p.averagePrice) / p.averagePrice) * 100.0
+                                    else 0.0
+
+                                Text(
+                                    "Gain/Loss: ${"%+.2f".format(gainLoss)} (${ "%+.2f".format(gainLossPct)}%)"
+                                )
+
                                 Text("Broker ticker: ${p.brokerTicker}")
                             }
                         }
