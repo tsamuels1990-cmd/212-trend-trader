@@ -337,6 +337,64 @@ async def market_quote(symbol: str):
     )
 
 
+TRADING212_POSITIONS_URL = "https://live.trading212.com/api/v0/equity/positions"
+
+@app.get("/trading212/position-price")
+async def trading212_position_price(symbol: str):
+    symbol = symbol.upper()
+    api_key = os.getenv("TRADING212_API_KEY")
+    secret_key = os.getenv("TRADING212_SECRET_KEY")
+
+    if not api_key or not secret_key:
+        raise HTTPException(
+            status_code=503,
+            detail="Trading 212 credentials are not configured"
+        )
+
+    async with httpx.AsyncClient(timeout=20) as client:
+        response = await client.get(
+            TRADING212_POSITIONS_URL,
+            auth=(api_key, secret_key)
+        )
+
+    if response.status_code != 200:
+        raise HTTPException(
+            status_code=response.status_code,
+            detail="Trading 212 positions request failed"
+        )
+
+    positions = response.json()
+
+    for position in positions:
+        instrument = position.get("instrument") or {}
+        broker_ticker = str(instrument.get("ticker", "")).upper()
+
+        # Trading 212 US tickers normally look like AAPL_US_EQ.
+        market_symbol = broker_ticker.split("_", 1)[0]
+
+        if symbol in (broker_ticker, market_symbol):
+            current_price = position.get("currentPrice")
+
+            if current_price is None:
+                raise HTTPException(
+                    status_code=502,
+                    detail="Trading 212 position has no current price"
+                )
+
+            return {
+                "symbol": market_symbol,
+                "broker_ticker": broker_ticker,
+                "price": float(current_price),
+                "source": "trading212",
+                "instrument_name": instrument.get("name", "")
+            }
+
+    raise HTTPException(
+        status_code=404,
+        detail=f"No open Trading 212 position found for {symbol}"
+    )
+
+
 from strategy import analyse
 
 TRADING212_INSTRUMENTS_URL = "https://live.trading212.com/api/v0/equity/metadata/instruments"
