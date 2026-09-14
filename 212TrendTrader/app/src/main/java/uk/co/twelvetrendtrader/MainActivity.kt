@@ -131,6 +131,30 @@ private suspend fun backendPaperSell(): JSONObject =
     }
 
 
+private suspend fun backendPaperStatus(): JSONObject =
+    withContext(Dispatchers.IO) {
+        val url =
+            "https://redesigned-orbit-4qwqr959pr7ph9gv-8001.app.github.dev/paper/status"
+
+        val request = Request.Builder()
+            .url(url)
+            .get()
+            .build()
+
+        OkHttpClient().newCall(request).execute().use { response ->
+            if (!response.isSuccessful) {
+                val body = response.body?.string()
+                throw Exception("Paper status error: HTTP ${response.code} ${body ?: ""}")
+            }
+
+            val body = response.body?.string()
+                ?: throw Exception("Paper status returned an empty response")
+
+            JSONObject(body)
+        }
+    }
+
+
 private suspend fun backendPaperCheck(): JSONObject =
     withContext(Dispatchers.IO) {
         val url =
@@ -205,6 +229,39 @@ fun App() {
     var log by remember { mutableStateOf(listOf("Ready.")) }
 
     fun addLog(s: String) { log = (log + s).takeLast(100) }
+
+    LaunchedEffect(Unit) {
+        runCatching {
+            backendPaperStatus()
+        }.onSuccess { state ->
+            cash = state.optDouble("cash", cash)
+            val backendPosition = state.optJSONObject("position")
+
+            if (backendPosition != null) {
+                val symbol = backendPosition.optString("symbol", "")
+                val entry = backendPosition.optDouble("entry", 0.0)
+                val quantity = backendPosition.optDouble("quantity", 0.0)
+                val target = backendPosition.optDouble("target", 0.0)
+                val stop = backendPosition.optDouble("stop", 0.0)
+
+                positions = listOf(
+                    SimPosition(
+                        ticker = symbol,
+                        entry = entry,
+                        quantity = quantity,
+                        price = entry,
+                        target = target,
+                        stop = stop
+                    )
+                )
+
+                status = "Restored paper position: $symbol"
+                addLog("Restored backend paper position: $symbol")
+            }
+        }.onFailure { e ->
+            addLog("Paper account restore failed: ${e.message}")
+        }
+    }
 
     LaunchedEffect(positions) {
         while (positions.isNotEmpty()) {
