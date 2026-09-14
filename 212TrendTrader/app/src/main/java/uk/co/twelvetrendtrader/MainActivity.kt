@@ -359,6 +359,23 @@ fun App() {
     }
 
 
+    LaunchedEffect(mode) {
+        if (mode == "LIVE") {
+            while (true) {
+                runCatching {
+                    backendLivePositions()
+                }.onSuccess { result ->
+                    livePositions = result
+                }.onFailure { e ->
+                    addLog("Live portfolio auto-refresh failed: ${e.message}")
+                }
+
+                delay(60000)
+            }
+        }
+    }
+
+
     MaterialTheme {
         Scaffold(
             topBar = {
