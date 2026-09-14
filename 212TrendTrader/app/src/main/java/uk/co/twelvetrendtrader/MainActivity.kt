@@ -222,7 +222,24 @@ fun App() {
                     addLog("AUTO PAPER SELL confirmed by backend; cash £${"%.2f".format(cash)}")
                 } else {
                     val current = backendPosition.optDouble("current_price", p.price)
-                    status = "Monitoring ${p.ticker} @ ${"%.2f".format(current)}"
+                    val quoteSource = backendPosition.optString("quote_source", "unknown")
+                    val latestTradingDay = backendPosition.optString("latest_trading_day", "")
+                    val monitoringStatus = backendPosition.optString("monitoring_status", "")
+
+                    status = when (quoteSource) {
+                        "live" -> "LIVE • ${p.ticker} @ ${"%.2f".format(current)} • automatic exits enabled"
+                        "cached" -> {
+                            val dateText = if (latestTradingDay.isNotBlank()) " • close $latestTradingDay" else ""
+                            "CACHED • ${p.ticker} @ ${"%.2f".format(current)}$dateText • automatic exits paused"
+                        }
+                        else -> {
+                            if (monitoringStatus.isNotBlank()) {
+                                "${p.ticker} @ ${"%.2f".format(current)} • $monitoringStatus"
+                            } else {
+                                "Monitoring ${p.ticker} @ ${"%.2f".format(current)}"
+                            }
+                        }
+                    }
                 }
             }.onFailure { e ->
                 addLog("Price monitor failed: ${e.message}")
