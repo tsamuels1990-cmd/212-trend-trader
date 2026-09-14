@@ -40,7 +40,20 @@ data class LivePosition(
     val name: String,
     val currentPrice: Double,
     val averagePrice: Double,
-    val quantity: Double
+    val quantity: Double,
+    val currency: String,
+    val positionValue: Double,
+    val positionCost: Double,
+    val unrealizedProfitLoss: Double
+)
+
+data class LiveAccountSummary(
+    val currency: String,
+    val cash: Double,
+    val totalValue: Double,
+    val investmentsValue: Double,
+    val investmentsCost: Double,
+    val unrealizedProfitLoss: Double
 )
 
 
@@ -124,11 +137,45 @@ private suspend fun backendLivePositions(): List<LivePosition> =
                     name = item.optString("name", ""),
                     currentPrice = item.optDouble("current_price", 0.0),
                     averagePrice = item.optDouble("average_price", 0.0),
-                    quantity = item.optDouble("quantity", 0.0)
+                    quantity = item.optDouble("quantity", 0.0),
+                    currency = item.optString("currency", "GBP"),
+                    positionValue = item.optDouble("position_value", 0.0),
+                    positionCost = item.optDouble("position_cost", 0.0),
+                    unrealizedProfitLoss = item.optDouble("unrealized_profit_loss", 0.0)
                 )
             }
 
             result
+        }
+    }
+
+
+private suspend fun backendLiveAccountSummary(): LiveAccountSummary =
+    withContext(Dispatchers.IO) {
+        val url =
+            "https://redesigned-orbit-4qwqr959pr7ph9gv-8001.app.github.dev/trading212/account-summary"
+
+        val request = Request.Builder().url(url).get().build()
+
+        OkHttpClient().newCall(request).execute().use { response ->
+            if (!response.isSuccessful) {
+                throw Exception("Account summary error: HTTP ${response.code}")
+            }
+
+            val body = response.body?.string()
+                ?: throw Exception("Account summary returned an empty response")
+
+            val root = JSONObject(body)
+            val investments = root.optJSONObject("investments")
+
+            LiveAccountSummary(
+                currency = root.optString("currency", "GBP"),
+                cash = root.optDouble("cash", 0.0),
+                totalValue = root.optDouble("totalValue", 0.0),
+                investmentsValue = investments?.optDouble("currentValue", 0.0) ?: 0.0,
+                investmentsCost = investments?.optDouble("totalCost", 0.0) ?: 0.0,
+                unrealizedProfitLoss = investments?.optDouble("unrealizedProfitLoss", 0.0) ?: 0.0
+            )
         }
     }
 
@@ -281,6 +328,7 @@ fun App() {
     var livePortfolioLoading by remember { mutableStateOf(false) }
     var liveLastUpdated by remember { mutableStateOf("Not yet updated") }
     var liveRefreshStatus by remember { mutableStateOf("Waiting for first refresh") }
+    var liveAccountSummary by remember { mutableStateOf<LiveAccountSummary?>(null) }
     var signals by remember { mutableStateOf(listOf<Signal>()) }
     var log by remember { mutableStateOf(listOf("Ready.")) }
 
@@ -367,11 +415,14 @@ fun App() {
         if (mode == "LIVE") {
             while (true) {
                 runCatching {
-                    backendLivePositions()
+                    val positions = backendLivePositions()
+                    val summary = backendLiveAccountSummary()
+                    Pair(positions, summary)
                 }.onSuccess { result ->
-                    livePositions = result
+                    livePositions = result.first
+                    liveAccountSummary = result.second
                     liveLastUpdated = SimpleDateFormat("HH:mm:ss", Locale.UK).format(Date())
-                    liveRefreshStatus = "Connected • ${result.size} positions"
+                    liveRefreshStatus = "Connected • ${result.first.size} positions"
                 }.onFailure { e ->
                     liveRefreshStatus = "Refresh failed"
                     addLog("Live portfolio auto-refresh failed: ${e.message}")
@@ -414,32 +465,37 @@ fun App() {
                         Text("Auto refresh: every 60 seconds")
                         Text(liveRefreshStatus)
 
-                        val totalValue = livePositions.sumOf {
-                            it.currentPrice * it.quantity
-                        }
+                        val summary = liveAccountSummary
 
-                        val totalCost = livePositions.sumOf {
-                            it.averagePrice * it.quantity
-                        }
+                        if (summary != null) {
+                            val glPct =
+                                if (summary.investmentsCost > 0.0)
+                                    (summary.unrealizedProfitLoss / summary.investmentsCost) * 100.0
+                                else 0.0
 
-                        val totalGainLoss = totalValue - totalCost
-                        val totalGainLossPct =
-                            if (totalCost > 0.0)
-                                (totalGainLoss / totalCost) * 100.0
-                            else 0.0
+                            val summaryGlColor =
+                                if (summary.unrealizedProfitLoss >= 0.0)
+                                    androidx.compose.ui.graphics.Color(0xFF2E7D32)
+                                else
+                                    androidx.compose.ui.graphics.Color(0xFFC62828)
 
-                        if (livePositions.isNotEmpty()) {
                             Text(
                                 "Positions: ${livePositions.size}",
                                 style = MaterialTheme.typography.titleMedium
                             )
-                            Text("Cost basis: ${"%.2f".format(totalCost)}")
+                            Text("Cash: ${summary.currency} ${"%.2f".format(summary.cash)}")
+                            Text("Cost basis: ${summary.currency} ${"%.2f".format(summary.investmentsCost)}")
                             Text(
-                                "Portfolio value: ${"%.2f".format(totalValue)}",
+                                "Investments value: ${summary.currency} ${"%.2f".format(summary.investmentsValue)}",
                                 style = MaterialTheme.typography.titleMedium
                             )
                             Text(
-                                "Unrealised G/L: ${"%+.2f".format(totalGainLoss)} (${ "%+.2f".format(totalGainLossPct)}%)"
+                                "Unrealised G/L: ${summary.currency} ${"%+.2f".format(summary.unrealizedProfitLoss)} (${"%+.2f".format(glPct)}%)",
+                                color = summaryGlColor
+                            )
+                            Text(
+                                "Total account value: ${summary.currency} ${"%.2f".format(summary.totalValue)}",
+                                style = MaterialTheme.typography.titleMedium
                             )
                         }
 
@@ -449,13 +505,16 @@ fun App() {
                                 livePortfolioLoading = true
                                 scope.launch {
                                     runCatching {
-                                        backendLivePositions()
+                                        val positions = backendLivePositions()
+                                        val summary = backendLiveAccountSummary()
+                                        Pair(positions, summary)
                                     }.onSuccess { result ->
-                                        livePositions = result
+                                        livePositions = result.first
+                                        liveAccountSummary = result.second
                                         liveLastUpdated = SimpleDateFormat("HH:mm:ss", Locale.UK).format(Date())
-                                        liveRefreshStatus = "Connected • ${result.size} positions"
+                                        liveRefreshStatus = "Connected • ${result.first.size} positions"
                                         status = "Live Trading 212 portfolio loaded"
-                                        addLog("Loaded ${result.size} read-only Trading 212 positions")
+                                        addLog("Loaded ${result.first.size} read-only Trading 212 positions")
                                     }.onFailure { e ->
                                         liveRefreshStatus = "Refresh failed"
                                         status = "Live portfolio failed: ${e.message}"
@@ -483,19 +542,31 @@ fun App() {
                                 Text("Current: ${"%.2f".format(p.currentPrice)}")
                                 Text("Average paid: ${"%.2f".format(p.averagePrice)}")
                                 Text("Quantity: ${"%.4f".format(p.quantity)}")
-                                Text("Position value: ${"%.2f".format(p.currentPrice * p.quantity)}")
-
-                                val gainLoss = (p.currentPrice - p.averagePrice) * p.quantity
+                                val gainLoss = p.unrealizedProfitLoss
                                 val gainLossPct =
-                                    if (p.averagePrice > 0.0)
-                                        ((p.currentPrice - p.averagePrice) / p.averagePrice) * 100.0
+                                    if (p.positionCost > 0.0)
+                                        (gainLoss / p.positionCost) * 100.0
                                     else 0.0
 
+                                val gainLossColor =
+                                    if (gainLoss >= 0.0)
+                                        androidx.compose.ui.graphics.Color(0xFF2E7D32)
+                                    else
+                                        androidx.compose.ui.graphics.Color(0xFFC62828)
+
                                 Text(
-                                    "Gain/Loss: ${"%+.2f".format(gainLoss)} (${ "%+.2f".format(gainLossPct)}%)"
+                                    "Position value: ${p.currency} ${"%.2f".format(p.positionValue)}"
                                 )
                                 Text(
-                                    if (gainLoss >= 0.0) "Status: PROFIT" else "Status: LOSS"
+                                    "Cost basis: ${p.currency} ${"%.2f".format(p.positionCost)}"
+                                )
+                                Text(
+                                    "Gain/Loss: ${p.currency} ${"%+.2f".format(gainLoss)} (${"%+.2f".format(gainLossPct)}%)",
+                                    color = gainLossColor
+                                )
+                                Text(
+                                    if (gainLoss >= 0.0) "Status: PROFIT" else "Status: LOSS",
+                                    color = gainLossColor
                                 )
 
                                 Text("Broker ticker: ${p.brokerTicker}")
