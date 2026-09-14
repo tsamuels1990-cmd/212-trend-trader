@@ -32,6 +32,16 @@ data class SimPosition(
 )
 
 
+data class LivePosition(
+    val symbol: String,
+    val brokerTicker: String,
+    val name: String,
+    val currentPrice: Double,
+    val averagePrice: Double,
+    val quantity: Double
+)
+
+
 private suspend fun scanBackend(minScore: Double, profitTargetPct: Double, stopLossPct: Double): List<Signal> =
     withContext(Dispatchers.IO) {
         val url =
@@ -79,6 +89,46 @@ private suspend fun scanBackend(minScore: Double, profitTargetPct: Double, stopL
         }
     }
 
+
+
+private suspend fun backendLivePositions(): List<LivePosition> =
+    withContext(Dispatchers.IO) {
+        val url =
+            "https://redesigned-orbit-4qwqr959pr7ph9gv-8001.app.github.dev/trading212/positions"
+
+        val request = Request.Builder()
+            .url(url)
+            .get()
+            .build()
+
+        OkHttpClient().newCall(request).execute().use { response ->
+            if (!response.isSuccessful) {
+                throw Exception("Live portfolio error: HTTP ${response.code}")
+            }
+
+            val body = response.body?.string()
+                ?: throw Exception("Live portfolio returned an empty response")
+
+            val root = JSONObject(body)
+            val array = root.getJSONArray("positions")
+            val result = mutableListOf<LivePosition>()
+
+            for (i in 0 until array.length()) {
+                val item = array.getJSONObject(i)
+
+                result += LivePosition(
+                    symbol = item.optString("symbol", ""),
+                    brokerTicker = item.optString("broker_ticker", ""),
+                    name = item.optString("name", ""),
+                    currentPrice = item.optDouble("current_price", 0.0),
+                    averagePrice = item.optDouble("average_price", 0.0),
+                    quantity = item.optDouble("quantity", 0.0)
+                )
+            }
+
+            result
+        }
+    }
 
 
 private suspend fun backendPaperBuy(
@@ -225,6 +275,8 @@ fun App() {
     var status by remember { mutableStateOf("Paper mode — no real orders") }
     var scanning by remember { mutableStateOf(false) }
     var positions by remember { mutableStateOf(listOf<SimPosition>()) }
+    var livePositions by remember { mutableStateOf(listOf<LivePosition>()) }
+    var livePortfolioLoading by remember { mutableStateOf(false) }
     var signals by remember { mutableStateOf(listOf<Signal>()) }
     var log by remember { mutableStateOf(listOf("Ready.")) }
 
@@ -328,6 +380,53 @@ fun App() {
                         Text("LIVE MODE: order placement is enabled only by an explicit action.", color = MaterialTheme.colorScheme.error)
                         OutlinedTextField(key, { key = it }, label = { Text("Trading 212 API key") }, modifier = Modifier.fillMaxWidth())
                         OutlinedTextField(secret, { secret = it }, label = { Text("API secret") }, modifier = Modifier.fillMaxWidth())
+                    }
+                }
+
+                if (mode == "LIVE") {
+                    item {
+                        Text("LIVE PORTFOLIO — READ ONLY", style = MaterialTheme.typography.titleLarge)
+
+                        Button(
+                            enabled = !livePortfolioLoading,
+                            onClick = {
+                                livePortfolioLoading = true
+                                scope.launch {
+                                    runCatching {
+                                        backendLivePositions()
+                                    }.onSuccess { result ->
+                                        livePositions = result
+                                        status = "Live Trading 212 portfolio loaded"
+                                        addLog("Loaded ${result.size} read-only Trading 212 positions")
+                                    }.onFailure { e ->
+                                        status = "Live portfolio failed: ${e.message}"
+                                        addLog("Live portfolio failed: ${e.message}")
+                                    }
+
+                                    livePortfolioLoading = false
+                                }
+                            },
+                            modifier = Modifier.fillMaxWidth()
+                        ) {
+                            Text(if (livePortfolioLoading) "LOADING..." else "REFRESH LIVE PORTFOLIO")
+                        }
+
+                        Text("No order execution permission is used by this screen.")
+                    }
+
+                    items(livePositions) { p ->
+                        Card(Modifier.fillMaxWidth()) {
+                            Column(Modifier.padding(12.dp)) {
+                                Text(
+                                    "${p.symbol} — ${p.name}",
+                                    style = MaterialTheme.typography.titleMedium
+                                )
+                                Text("Current: ${"%.2f".format(p.currentPrice)}")
+                                Text("Average paid: ${"%.2f".format(p.averagePrice)}")
+                                Text("Quantity: ${"%.4f".format(p.quantity)}")
+                                Text("Broker ticker: ${p.brokerTicker}")
+                            }
+                        }
                     }
                 }
 
