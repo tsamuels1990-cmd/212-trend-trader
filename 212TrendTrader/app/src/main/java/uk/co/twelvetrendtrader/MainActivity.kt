@@ -16,6 +16,8 @@ import androidx.compose.ui.unit.dp
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.delay
 import java.util.Locale
+import java.text.SimpleDateFormat
+import java.util.Date
 import okhttp3.OkHttpClient
 import okhttp3.Request
 import org.json.JSONObject
@@ -277,6 +279,8 @@ fun App() {
     var positions by remember { mutableStateOf(listOf<SimPosition>()) }
     var livePositions by remember { mutableStateOf(listOf<LivePosition>()) }
     var livePortfolioLoading by remember { mutableStateOf(false) }
+    var liveLastUpdated by remember { mutableStateOf("Not yet updated") }
+    var liveRefreshStatus by remember { mutableStateOf("Waiting for first refresh") }
     var signals by remember { mutableStateOf(listOf<Signal>()) }
     var log by remember { mutableStateOf(listOf("Ready.")) }
 
@@ -366,7 +370,10 @@ fun App() {
                     backendLivePositions()
                 }.onSuccess { result ->
                     livePositions = result
+                    liveLastUpdated = SimpleDateFormat("HH:mm:ss", Locale.UK).format(Date())
+                    liveRefreshStatus = "Connected • ${result.size} positions"
                 }.onFailure { e ->
+                    liveRefreshStatus = "Refresh failed"
                     addLog("Live portfolio auto-refresh failed: ${e.message}")
                 }
 
@@ -403,6 +410,38 @@ fun App() {
                 if (mode == "LIVE") {
                     item {
                         Text("LIVE PORTFOLIO — READ ONLY", style = MaterialTheme.typography.titleLarge)
+                        Text("Last updated: $liveLastUpdated")
+                        Text("Auto refresh: every 60 seconds")
+                        Text(liveRefreshStatus)
+
+                        val totalValue = livePositions.sumOf {
+                            it.currentPrice * it.quantity
+                        }
+
+                        val totalCost = livePositions.sumOf {
+                            it.averagePrice * it.quantity
+                        }
+
+                        val totalGainLoss = totalValue - totalCost
+                        val totalGainLossPct =
+                            if (totalCost > 0.0)
+                                (totalGainLoss / totalCost) * 100.0
+                            else 0.0
+
+                        if (livePositions.isNotEmpty()) {
+                            Text(
+                                "Positions: ${livePositions.size}",
+                                style = MaterialTheme.typography.titleMedium
+                            )
+                            Text("Cost basis: ${"%.2f".format(totalCost)}")
+                            Text(
+                                "Portfolio value: ${"%.2f".format(totalValue)}",
+                                style = MaterialTheme.typography.titleMedium
+                            )
+                            Text(
+                                "Unrealised G/L: ${"%+.2f".format(totalGainLoss)} (${ "%+.2f".format(totalGainLossPct)}%)"
+                            )
+                        }
 
                         Button(
                             enabled = !livePortfolioLoading,
@@ -413,9 +452,12 @@ fun App() {
                                         backendLivePositions()
                                     }.onSuccess { result ->
                                         livePositions = result
+                                        liveLastUpdated = SimpleDateFormat("HH:mm:ss", Locale.UK).format(Date())
+                                        liveRefreshStatus = "Connected • ${result.size} positions"
                                         status = "Live Trading 212 portfolio loaded"
                                         addLog("Loaded ${result.size} read-only Trading 212 positions")
                                     }.onFailure { e ->
+                                        liveRefreshStatus = "Refresh failed"
                                         status = "Live portfolio failed: ${e.message}"
                                         addLog("Live portfolio failed: ${e.message}")
                                     }
@@ -441,6 +483,7 @@ fun App() {
                                 Text("Current: ${"%.2f".format(p.currentPrice)}")
                                 Text("Average paid: ${"%.2f".format(p.averagePrice)}")
                                 Text("Quantity: ${"%.4f".format(p.quantity)}")
+                                Text("Position value: ${"%.2f".format(p.currentPrice * p.quantity)}")
 
                                 val gainLoss = (p.currentPrice - p.averagePrice) * p.quantity
                                 val gainLossPct =
@@ -450,6 +493,9 @@ fun App() {
 
                                 Text(
                                     "Gain/Loss: ${"%+.2f".format(gainLoss)} (${ "%+.2f".format(gainLossPct)}%)"
+                                )
+                                Text(
+                                    if (gainLoss >= 0.0) "Status: PROFIT" else "Status: LOSS"
                                 )
 
                                 Text("Broker ticker: ${p.brokerTicker}")
