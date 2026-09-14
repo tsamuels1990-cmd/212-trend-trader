@@ -395,6 +395,50 @@ async def trading212_position_price(symbol: str):
     )
 
 
+@app.get("/trading212/positions")
+async def trading212_positions():
+    api_key = os.getenv("TRADING212_API_KEY")
+    secret_key = os.getenv("TRADING212_SECRET_KEY")
+
+    if not api_key or not secret_key:
+        raise HTTPException(
+            status_code=503,
+            detail="Trading 212 credentials are not configured"
+        )
+
+    async with httpx.AsyncClient(timeout=20) as client:
+        response = await client.get(
+            TRADING212_POSITIONS_URL,
+            auth=(api_key, secret_key)
+        )
+
+    if response.status_code != 200:
+        raise HTTPException(
+            status_code=response.status_code,
+            detail="Trading 212 positions request failed"
+        )
+
+    result = []
+
+    for position in response.json():
+        instrument = position.get("instrument") or {}
+        broker_ticker = str(instrument.get("ticker", "")).upper()
+
+        result.append({
+            "symbol": broker_ticker.split("_", 1)[0],
+            "broker_ticker": broker_ticker,
+            "name": instrument.get("name", ""),
+            "current_price": position.get("currentPrice"),
+            "average_price": position.get("averagePricePaid"),
+            "quantity": position.get("quantity")
+        })
+
+    return {
+        "count": len(result),
+        "positions": result
+    }
+
+
 from strategy import analyse
 
 TRADING212_INSTRUMENTS_URL = "https://live.trading212.com/api/v0/equity/metadata/instruments"
