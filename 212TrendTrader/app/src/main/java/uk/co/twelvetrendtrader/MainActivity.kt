@@ -254,6 +254,55 @@ private suspend fun backendPaperStatus(): JSONObject =
     }
 
 
+private suspend fun backendPaperAutomationStatus(): JSONObject =
+    withContext(Dispatchers.IO) {
+        val request = Request.Builder()
+            .url("https://redesigned-orbit-4qwqr959pr7ph9gv-8001.app.github.dev/paper/automation")
+            .get()
+            .build()
+
+        OkHttpClient().newCall(request).execute().use { response ->
+            val body = response.body?.string()
+                ?: throw Exception("Automation status returned an empty response")
+            if (!response.isSuccessful) {
+                throw Exception("Automation status error: HTTP ${response.code} $body")
+            }
+            JSONObject(body)
+        }
+    }
+
+private suspend fun configureBackendPaperAutomation(
+    enabled: Boolean,
+    profitTargetPct: Double,
+    stopLossPct: Double,
+    minScore: Double
+): JSONObject =
+    withContext(Dispatchers.IO) {
+        val url =
+            "https://redesigned-orbit-4qwqr959pr7ph9gv-8001.app.github.dev/paper/automation" +
+                "?enabled=$enabled" +
+                "&profit_target_pct=$profitTargetPct" +
+                "&stop_loss_pct=$stopLossPct" +
+                "&min_score=$minScore" +
+                "&scan_interval_seconds=900" +
+                "&check_interval_seconds=60"
+
+        val request = Request.Builder()
+            .url(url)
+            .post(okhttp3.RequestBody.create(null, ByteArray(0)))
+            .build()
+
+        OkHttpClient().newCall(request).execute().use { response ->
+            val body = response.body?.string()
+                ?: throw Exception("Automation update returned an empty response")
+            if (!response.isSuccessful) {
+                throw Exception("Automation update error: HTTP ${response.code} $body")
+            }
+            JSONObject(body)
+        }
+    }
+
+
 private suspend fun backendPaperCheck(): JSONObject =
     withContext(Dispatchers.IO) {
         val url =
@@ -331,6 +380,13 @@ fun App() {
     var liveAccountSummary by remember { mutableStateOf<LiveAccountSummary?>(null) }
     var signals by remember { mutableStateOf(listOf<Signal>()) }
     var log by remember { mutableStateOf(listOf("Ready.")) }
+    var automationEnabled by remember { mutableStateOf(false) }
+    var automationLoaded by remember { mutableStateOf(false) }
+    var automationBusy by remember { mutableStateOf(false) }
+    var automationLastAction by remember { mutableStateOf("Loading...") }
+    var automationLastScan by remember { mutableStateOf("Not yet scanned") }
+    var automationNextScan by remember { mutableStateOf("Waiting") }
+    var automationLastUpdated by remember { mutableStateOf("Not yet updated") }
 
     fun addLog(s: String) { log = (log + s).takeLast(100) }
 
@@ -383,6 +439,7 @@ fun App() {
                     addLog("AUTO PAPER SELL confirmed by backend; cash £${"%.2f".format(cash)}")
                 } else {
                     val current = backendPosition.optDouble("current_price", p.price)
+                    positions = listOf(p.copy(price = current))
                     val quoteSource = backendPosition.optString("quote_source", "unknown")
                     val latestTradingDay = backendPosition.optString("latest_trading_day", "")
                     val monitoringStatus = backendPosition.optString("monitoring_status", "")
@@ -410,6 +467,93 @@ fun App() {
         }
     }
 
+
+    LaunchedEffect(mode) {
+        if (mode == "PAPER") {
+            while (true) {
+                runCatching {
+                    backendPaperAutomationStatus()
+                }.onSuccess { state ->
+                    val automation = state.getJSONObject("automation")
+                    val firstLoad = !automationLoaded
+                    val previousAction = automationLastAction
+
+                    automationEnabled = automation.optBoolean("enabled", false)
+                    automationLastAction =
+                        automation.optString("last_action", "No action recorded")
+                    automationLastScan =
+                        automation.optString("last_scan_at", "")
+                            .takeIf { it.isNotBlank() }
+                            ?.replace("T", " ")
+                            ?.take(19)
+                            ?: "Not yet scanned"
+
+                    val scanSeconds =
+                        automation.optInt("scan_interval_seconds", 900)
+                    val backendPosition = state.optJSONObject("position")
+
+                    automationNextScan =
+                        if (backendPosition != null) {
+                            "After the open position closes"
+                        } else {
+                            val raw = automation.optString("last_scan_at", "")
+                            runCatching {
+                                java.time.LocalDateTime.parse(raw)
+                                    .plusSeconds(scanSeconds.toLong())
+                                    .format(
+                                        java.time.format.DateTimeFormatter
+                                            .ofPattern("HH:mm:ss 'UTC'")
+                                    )
+                            }.getOrDefault("Due shortly")
+                        }
+
+                    if (firstLoad) {
+                        profitTarget = automation
+                            .optDouble("profit_target_pct", 4.0).toString()
+                        stopLoss = automation
+                            .optDouble("stop_loss_pct", 2.0).toString()
+                        minScore = automation
+                            .optDouble("min_score", 75.0).toString()
+                    }
+
+                    cash = state.optDouble("cash", cash)
+
+                    if (backendPosition != null) {
+                        val entry = backendPosition.optDouble("entry", 0.0)
+                        positions = listOf(
+                            SimPosition(
+                                ticker = backendPosition.optString("symbol", ""),
+                                entry = entry,
+                                quantity = backendPosition.optDouble("quantity", 0.0),
+                                price = backendPosition.optDouble(
+                                    "current_price", entry
+                                ),
+                                target = backendPosition.optDouble("target", 0.0),
+                                stop = backendPosition.optDouble("stop", 0.0)
+                            )
+                        )
+                    } else {
+                        positions = emptyList()
+                    }
+
+                    automationLastUpdated =
+                        SimpleDateFormat("HH:mm:ss", Locale.UK).format(Date())
+                    automationLoaded = true
+
+                    if (!firstLoad &&
+                        automationLastAction != previousAction
+                    ) {
+                        addLog("AUTO: $automationLastAction")
+                    }
+                }.onFailure { e ->
+                    automationLastUpdated = "Connection failed"
+                    addLog("Automation refresh failed: ${e.message}")
+                }
+
+                delay(30000)
+            }
+        }
+    }
 
     LaunchedEffect(mode) {
         if (mode == "LIVE") {
@@ -455,6 +599,152 @@ fun App() {
                         Text("LIVE MODE: order placement is enabled only by an explicit action.", color = MaterialTheme.colorScheme.error)
                         OutlinedTextField(key, { key = it }, label = { Text("Trading 212 API key") }, modifier = Modifier.fillMaxWidth())
                         OutlinedTextField(secret, { secret = it }, label = { Text("API secret") }, modifier = Modifier.fillMaxWidth())
+                    }
+                }
+
+                if (mode == "PAPER") {
+                    item {
+                        Card(Modifier.fillMaxWidth()) {
+                            Column(
+                                Modifier.padding(12.dp),
+                                verticalArrangement =
+                                    Arrangement.spacedBy(6.dp)
+                            ) {
+                                Text(
+                                    if (automationEnabled)
+                                        "PAPER AUTOMATION: ON"
+                                    else
+                                        "PAPER AUTOMATION: PAUSED",
+                                    style = MaterialTheme.typography.titleMedium,
+                                    color =
+                                        if (automationEnabled)
+                                            androidx.compose.ui.graphics.Color(0xFF2E7D32)
+                                        else
+                                            androidx.compose.ui.graphics.Color(0xFFC62828)
+                                )
+                                Text("Last action: $automationLastAction")
+                                Text("Last scan: $automationLastScan")
+                                Text("Next scan: $automationNextScan")
+                                Text("Position check: every 60 seconds")
+                                Text("Dashboard updated: $automationLastUpdated")
+
+                                val open = positions.firstOrNull()
+                                if (open != null) {
+                                    val value = open.quantity * open.price
+                                    val cost = open.quantity * open.entry
+                                    val gain = value - cost
+                                    val gainPct =
+                                        if (cost > 0.0) gain / cost * 100.0
+                                        else 0.0
+                                    val gainColor =
+                                        if (gain >= 0.0)
+                                            androidx.compose.ui.graphics.Color(0xFF2E7D32)
+                                        else
+                                            androidx.compose.ui.graphics.Color(0xFFC62828)
+
+                                    Text(
+                                        "Live paper price: ${"%.2f".format(open.price)}"
+                                    )
+                                    Text(
+                                        "Paper P/L: £${"%+.2f".format(gain)} " +
+                                            "(${"%+.2f".format(gainPct)}%)",
+                                        color = gainColor
+                                    )
+                                }
+
+                                Button(
+                                    enabled = !automationBusy,
+                                    onClick = {
+                                        automationBusy = true
+                                        scope.launch {
+                                            runCatching {
+                                                configureBackendPaperAutomation(
+                                                    enabled = true,
+                                                    profitTargetPct =
+                                                        profitTarget.toDoubleOrNull()
+                                                            ?: 4.0,
+                                                    stopLossPct =
+                                                        stopLoss.toDoubleOrNull()
+                                                            ?: 2.0,
+                                                    minScore =
+                                                        minScore.toDoubleOrNull()
+                                                            ?: 75.0
+                                                )
+                                            }.onSuccess { state ->
+                                                automationEnabled = true
+                                                automationLastAction =
+                                                    state.getJSONObject("automation")
+                                                        .optString(
+                                                            "last_action",
+                                                            "Settings saved"
+                                                        )
+                                                status =
+                                                    "Paper automation settings saved"
+                                                addLog(
+                                                    "Automation settings saved and enabled"
+                                                )
+                                            }.onFailure { e ->
+                                                addLog(
+                                                    "Automation update failed: ${e.message}"
+                                                )
+                                            }
+                                            automationBusy = false
+                                        }
+                                    },
+                                    modifier = Modifier.fillMaxWidth()
+                                ) {
+                                    Text(
+                                        if (automationBusy) "SAVING..."
+                                        else "SAVE SETTINGS & ENABLE"
+                                    )
+                                }
+
+                                OutlinedButton(
+                                    enabled = !automationBusy,
+                                    onClick = {
+                                        automationBusy = true
+                                        scope.launch {
+                                            val newEnabled = !automationEnabled
+                                            runCatching {
+                                                configureBackendPaperAutomation(
+                                                    enabled = newEnabled,
+                                                    profitTargetPct =
+                                                        profitTarget.toDoubleOrNull()
+                                                            ?: 4.0,
+                                                    stopLossPct =
+                                                        stopLoss.toDoubleOrNull()
+                                                            ?: 2.0,
+                                                    minScore =
+                                                        minScore.toDoubleOrNull()
+                                                            ?: 75.0
+                                                )
+                                            }.onSuccess {
+                                                automationEnabled = newEnabled
+                                                automationLastAction =
+                                                    if (newEnabled)
+                                                        "Automation enabled"
+                                                    else
+                                                        "Automation paused"
+                                                addLog(automationLastAction)
+                                            }.onFailure { e ->
+                                                addLog(
+                                                    "Automation toggle failed: ${e.message}"
+                                                )
+                                            }
+                                            automationBusy = false
+                                        }
+                                    },
+                                    modifier = Modifier.fillMaxWidth()
+                                ) {
+                                    Text(
+                                        if (automationEnabled)
+                                            "PAUSE AUTOMATION"
+                                        else
+                                            "RESUME AUTOMATION"
+                                    )
+                                }
+                            }
+                        }
                     }
                 }
 
@@ -670,6 +960,22 @@ fun App() {
                             Text(p.ticker, style = MaterialTheme.typography.titleMedium)
                             Text("Entry ${"%.2f".format(p.entry)} • Target ${"%.2f".format(p.target)} • Stop ${"%.2f".format(p.stop)}")
                             Text("Quantity ${"%.4f".format(p.quantity)}")
+                            Text("Current ${"%.2f".format(p.price)}")
+                            val paperGain =
+                                p.quantity * (p.price - p.entry)
+                            val paperGainPct =
+                                if (p.entry > 0.0)
+                                    (p.price - p.entry) / p.entry * 100.0
+                                else 0.0
+                            Text(
+                                "P/L £${"%+.2f".format(paperGain)} " +
+                                    "(${"%+.2f".format(paperGainPct)}%)",
+                                color =
+                                    if (paperGain >= 0.0)
+                                        androidx.compose.ui.graphics.Color(0xFF2E7D32)
+                                    else
+                                        androidx.compose.ui.graphics.Color(0xFFC62828)
+                            )
                             Button(onClick = {
                                 scope.launch {
                                     try {
