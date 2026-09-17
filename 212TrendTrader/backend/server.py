@@ -351,40 +351,98 @@ async def market_candles(
 @app.get("/market/quote")
 async def market_quote(symbol: str):
     symbol = symbol.upper()
+
+    # Yahoo's intraday chart supplies a quote timestamp, allowing us to
+    # distinguish a genuinely recent price from an old market close.
+    try:
+        async with httpx.AsyncClient(
+            timeout=15,
+            headers={"User-Agent": "Mozilla/5.0 212TrendTrader/1.0"},
+        ) as client:
+            response = await client.get(
+                f"https://query1.finance.yahoo.com/v8/finance/chart/{symbol}",
+                params={"interval": "1m", "range": "1d"},
+            )
+
+        if response.status_code == 200:
+            payload = response.json()
+            result = payload.get("chart", {}).get("result") or []
+
+            if result:
+                chart = result[0]
+                meta = chart.get("meta") or {}
+                price = meta.get("regularMarketPrice")
+                quote_time = meta.get("regularMarketTime")
+
+                if price is None or quote_time is None:
+                    timestamps = chart.get("timestamp") or []
+                    indicators = chart.get("indicators") or {}
+                    quotes = indicators.get("quote") or []
+                    closes = quotes[0].get("close", []) if quotes else []
+
+                    valid = [
+                        (timestamp, close)
+                        for timestamp, close in zip(timestamps, closes)
+                        if close is not None
+                    ]
+
+                    if valid:
+                        quote_time, price = valid[-1]
+
+                if price is not None and quote_time is not None:
+                    price = float(price)
+                    quote_time = int(quote_time)
+                    age_seconds = datetime.utcnow().timestamp() - quote_time
+
+                    if price > 0 and -60 <= age_seconds <= 1200:
+                        return {
+                            "symbol": symbol,
+                            "price": price,
+                            "latest_trading_day": datetime.utcfromtimestamp(
+                                quote_time
+                            ).date().isoformat(),
+                            "quote_timestamp": quote_time,
+                            "quote_age_seconds": max(0, int(age_seconds)),
+                            "source": "live",
+                            "provider": "yahoo_intraday",
+                        }
+    except (httpx.HTTPError, ValueError, TypeError, KeyError, IndexError):
+        pass
+
+    # Alpha Vantage fallback is useful for display, but it has no precise
+    # intraday timestamp. Mark it delayed so it cannot trigger auto exits.
     api_key = os.getenv("ALPHA_VANTAGE_API_KEY")
 
     if api_key:
-        params = {
-            "function": "GLOBAL_QUOTE",
-            "symbol": symbol,
-            "apikey": api_key,
-        }
-
         try:
             async with httpx.AsyncClient(timeout=20) as client:
                 response = await client.get(
                     "https://www.alphavantage.co/query",
-                    params=params
+                    params={
+                        "function": "GLOBAL_QUOTE",
+                        "symbol": symbol,
+                        "apikey": api_key,
+                    },
                 )
 
             if response.status_code == 200:
-                data = response.json()
-                quote = data.get("Global Quote", {})
+                quote = response.json().get("Global Quote", {})
                 price_raw = quote.get("05. price")
 
-                if price_raw:
+                if price_raw and float(price_raw) > 0:
                     return {
                         "symbol": symbol,
                         "price": float(price_raw),
                         "latest_trading_day": quote.get(
                             "07. latest trading day", ""
                         ),
-                        "source": "live"
+                        "source": "delayed",
+                        "provider": "alpha_vantage",
                     }
-        except (httpx.HTTPError, ValueError):
+        except (httpx.HTTPError, ValueError, TypeError):
             pass
 
-    # Fallback to the latest cached daily candle.
+    # Final fallback: latest stored daily close. Display only.
     cache_file = CACHE_DIR / f"{symbol}_compact.json"
 
     if cache_file.exists():
@@ -398,14 +456,15 @@ async def market_quote(symbol: str):
                     "symbol": symbol,
                     "price": float(latest["close"]),
                     "latest_trading_day": latest.get("time", ""),
-                    "source": "cached"
+                    "source": "cached",
+                    "provider": "daily_cache",
                 }
         except (OSError, json.JSONDecodeError, KeyError, ValueError):
             pass
 
     raise HTTPException(
         status_code=502,
-        detail="No live or cached quote available"
+        detail="No recent or cached quote available",
     )
 
 
