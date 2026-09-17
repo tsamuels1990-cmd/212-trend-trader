@@ -18,6 +18,16 @@ def default_paper_state():
         "cash": 1000.0,
         "position": None,
         "events": ["Backend paper account ready."],
+        "automation": {
+            "enabled": True,
+            "profit_target_pct": 4.0,
+            "stop_loss_pct": 2.0,
+            "min_score": 75.0,
+            "scan_interval_seconds": 900,
+            "check_interval_seconds": 60,
+            "last_scan_at": None,
+            "last_action": "Waiting for first automated scan",
+        },
     }
 
 def load_paper_state():
@@ -25,7 +35,11 @@ def load_paper_state():
         if PAPER_STATE_FILE.exists():
             data = json.loads(PAPER_STATE_FILE.read_text())
             if isinstance(data, dict) and "cash" in data and "position" in data:
+                defaults = default_paper_state()
                 data.setdefault("events", [])
+                data.setdefault("automation", defaults["automation"])
+                for key, value in defaults["automation"].items():
+                    data["automation"].setdefault(key, value)
                 return data
     except (OSError, json.JSONDecodeError):
         pass
@@ -41,7 +55,65 @@ def save_paper_state():
         print(f"PAPER STATE SAVE ERROR: {exc}")
 
 PAPER_STATE = load_paper_state()
+PAPER_AUTOMATION_TASK = None
 
+
+def append_paper_event(message):
+    PAPER_STATE["events"].append(message)
+    PAPER_STATE["events"] = PAPER_STATE["events"][-100:]
+
+
+@app.get("/paper/automation")
+async def paper_automation_status():
+    return {
+        "automation": PAPER_STATE["automation"],
+        "cash": PAPER_STATE["cash"],
+        "position": PAPER_STATE["position"],
+    }
+
+
+@app.post("/paper/automation")
+async def configure_paper_automation(
+    enabled: bool = True,
+    profit_target_pct: float = 4.0,
+    stop_loss_pct: float = 2.0,
+    min_score: float = 75.0,
+    scan_interval_seconds: int = 900,
+    check_interval_seconds: int = 60,
+):
+    if profit_target_pct <= 0 or stop_loss_pct <= 0:
+        raise HTTPException(
+            status_code=400,
+            detail="Profit target and stop loss must be positive",
+        )
+
+    if not 0 <= min_score <= 100:
+        raise HTTPException(
+            status_code=400,
+            detail="Minimum score must be between 0 and 100",
+        )
+
+    if scan_interval_seconds < 60 or check_interval_seconds < 30:
+        raise HTTPException(
+            status_code=400,
+            detail="Scan interval must be at least 60 seconds and check interval at least 30 seconds",
+        )
+
+    automation = PAPER_STATE["automation"]
+    automation.update({
+        "enabled": enabled,
+        "profit_target_pct": profit_target_pct,
+        "stop_loss_pct": stop_loss_pct,
+        "min_score": min_score,
+        "scan_interval_seconds": scan_interval_seconds,
+        "check_interval_seconds": check_interval_seconds,
+    })
+    automation["last_action"] = (
+        "Automation enabled" if enabled else "Automation paused"
+    )
+    append_paper_event(automation["last_action"])
+    save_paper_state()
+    return await paper_automation_status()
 
 
 @app.post("/paper/buy")
@@ -68,7 +140,7 @@ async def paper_buy(symbol: str, profit_target_pct: float = 4.0, stop_loss_pct: 
         "stop_loss_pct": stop_loss_pct
     }
     PAPER_STATE["cash"] = 0.0
-    PAPER_STATE["events"].append(
+    append_paper_event(
         f"PAPER BUY {symbol.upper()} qty {quantity:.4f} @ {price:.2f}"
     )
     save_paper_state()
@@ -91,7 +163,7 @@ async def paper_sell():
     value = position["quantity"] * current
 
     PAPER_STATE["cash"] = value
-    PAPER_STATE["events"].append(
+    append_paper_event(
         f"PAPER SELL {position['symbol']} qty {position['quantity']:.4f} @ {current:.2f}"
     )
     PAPER_STATE["position"] = None
@@ -134,7 +206,7 @@ async def paper_check():
     if reason is not None:
         value = position["quantity"] * current
         PAPER_STATE["cash"] = value
-        PAPER_STATE["events"].append(
+        append_paper_event(
             f"AUTO PAPER SELL {position['symbol']} @ {current:.2f} {reason}"
         )
         PAPER_STATE["position"] = None
@@ -544,6 +616,110 @@ async def trading212_us_stock_universe():
 CACHE_WARM_TASK = None
 
 
+async def paper_automation_loop():
+    await asyncio.sleep(10)
+
+    while True:
+        automation = PAPER_STATE["automation"]
+        sleep_seconds = max(
+            30,
+            int(automation.get("check_interval_seconds", 60)),
+        )
+
+        try:
+            if not automation.get("enabled", False):
+                await asyncio.sleep(sleep_seconds)
+                continue
+
+            if PAPER_STATE["position"] is not None:
+                await paper_check()
+                automation["last_action"] = "Open position checked"
+                save_paper_state()
+            else:
+                now = datetime.utcnow()
+                last_scan_at = automation.get("last_scan_at")
+                scan_due = True
+
+                if last_scan_at:
+                    try:
+                        last_scan = datetime.fromisoformat(last_scan_at)
+                        scan_due = (
+                            now - last_scan
+                        ).total_seconds() >= int(
+                            automation.get("scan_interval_seconds", 900)
+                        )
+                    except (TypeError, ValueError):
+                        scan_due = True
+
+                if scan_due:
+                    cached_symbols = sorted({
+                        cache_file.name.replace("_compact.json", "")
+                        for cache_file in CACHE_DIR.glob("*_compact.json")
+                    })
+                    automation["last_scan_at"] = now.isoformat()
+
+                    if not cached_symbols:
+                        automation["last_action"] = (
+                            "Automated scan waiting for cached market data"
+                        )
+                    else:
+                        scan = await scanner_scan(
+                            symbols=",".join(cached_symbols),
+                            min_score=float(
+                                automation.get("min_score", 75.0)
+                            ),
+                            profit_target_pct=float(
+                                automation.get("profit_target_pct", 4.0)
+                            ),
+                            stop_loss_pct=float(
+                                automation.get("stop_loss_pct", 2.0)
+                            ),
+                        )
+                        qualified = scan.get("qualified", [])
+
+                        if qualified:
+                            best = qualified[0]
+                            symbol = best["symbol"]
+                            score = best["analysis"]["score"]
+
+                            await paper_buy(
+                                symbol=symbol,
+                                profit_target_pct=float(
+                                    automation.get(
+                                        "profit_target_pct", 4.0
+                                    )
+                                ),
+                                stop_loss_pct=float(
+                                    automation.get("stop_loss_pct", 2.0)
+                                ),
+                            )
+                            automation["last_action"] = (
+                                f"Bought {symbol} automatically "
+                                f"from score {score:.2f}"
+                            )
+                            append_paper_event(
+                                automation["last_action"]
+                            )
+                        else:
+                            automation["last_action"] = (
+                                "Automated scan found no qualifying signal"
+                            )
+
+                    save_paper_state()
+
+        except asyncio.CancelledError:
+            raise
+        except Exception as exc:
+            automation["last_action"] = (
+                f"Automation error: {str(exc)[:160]}"
+            )
+            append_paper_event(automation["last_action"])
+            save_paper_state()
+            print(f"PAPER AUTOMATION ERROR: {exc}")
+
+        await asyncio.sleep(sleep_seconds)
+
+
 def load_alpha_failed_symbols():
     try:
         if not ALPHA_FAILED_FILE.exists():
@@ -712,20 +888,28 @@ async def cache_warm_loop():
 
 
 @app.on_event("startup")
-async def start_cache_warmer():
-    global CACHE_WARM_TASK
+async def start_background_tasks():
+    global CACHE_WARM_TASK, PAPER_AUTOMATION_TASK
 
     if CACHE_WARM_TASK is None or CACHE_WARM_TASK.done():
         CACHE_WARM_TASK = asyncio.create_task(cache_warm_loop())
 
+    if PAPER_AUTOMATION_TASK is None or PAPER_AUTOMATION_TASK.done():
+        PAPER_AUTOMATION_TASK = asyncio.create_task(
+            paper_automation_loop()
+        )
+
 
 @app.on_event("shutdown")
-async def stop_cache_warmer():
-    global CACHE_WARM_TASK
+async def stop_background_tasks():
+    global CACHE_WARM_TASK, PAPER_AUTOMATION_TASK
 
-    if CACHE_WARM_TASK is not None:
-        CACHE_WARM_TASK.cancel()
-        CACHE_WARM_TASK = None
+    for task in (CACHE_WARM_TASK, PAPER_AUTOMATION_TASK):
+        if task is not None:
+            task.cancel()
+
+    CACHE_WARM_TASK = None
+    PAPER_AUTOMATION_TASK = None
 
 
 @app.get("/cache/warm-status")
