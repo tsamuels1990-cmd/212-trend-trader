@@ -24,6 +24,17 @@ import org.json.JSONObject
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 
+
+private val backendClient = OkHttpClient.Builder()
+    .addInterceptor { chain ->
+        val authenticatedRequest = chain.request().newBuilder()
+            .header("X-API-Key", BuildConfig.BACKEND_API_TOKEN)
+            .build()
+        chain.proceed(authenticatedRequest)
+    }
+    .build()
+
+
 data class SimPosition(
     val ticker: String,
     val entry: Double,
@@ -60,9 +71,9 @@ data class LiveAccountSummary(
 private suspend fun scanBackend(minScore: Double, profitTargetPct: Double, stopLossPct: Double): List<Signal> =
     withContext(Dispatchers.IO) {
         val url =
-            "https://redesigned-orbit-4qwqr959pr7ph9gv-8001.app.github.dev/scanner/scan?min_score=$minScore&profit_target_pct=$profitTargetPct&stop_loss_pct=$stopLossPct"
+            "https://34-45-135-193.sslip.io/scanner/scan?min_score=$minScore&profit_target_pct=$profitTargetPct&stop_loss_pct=$stopLossPct"
 
-        val client = OkHttpClient()
+        val client = backendClient
         val request = Request.Builder()
             .url(url)
             .get()
@@ -109,14 +120,14 @@ private suspend fun scanBackend(minScore: Double, profitTargetPct: Double, stopL
 private suspend fun backendLivePositions(): List<LivePosition> =
     withContext(Dispatchers.IO) {
         val url =
-            "https://redesigned-orbit-4qwqr959pr7ph9gv-8001.app.github.dev/trading212/positions"
+            "https://34-45-135-193.sslip.io/trading212/positions"
 
         val request = Request.Builder()
             .url(url)
             .get()
             .build()
 
-        OkHttpClient().newCall(request).execute().use { response ->
+        backendClient.newCall(request).execute().use { response ->
             if (!response.isSuccessful) {
                 throw Exception("Live portfolio error: HTTP ${response.code}")
             }
@@ -153,11 +164,11 @@ private suspend fun backendLivePositions(): List<LivePosition> =
 private suspend fun backendLiveAccountSummary(): LiveAccountSummary =
     withContext(Dispatchers.IO) {
         val url =
-            "https://redesigned-orbit-4qwqr959pr7ph9gv-8001.app.github.dev/trading212/account-summary"
+            "https://34-45-135-193.sslip.io/trading212/account-summary"
 
         val request = Request.Builder().url(url).get().build()
 
-        OkHttpClient().newCall(request).execute().use { response ->
+        backendClient.newCall(request).execute().use { response ->
             if (!response.isSuccessful) {
                 throw Exception("Account summary error: HTTP ${response.code}")
             }
@@ -187,14 +198,14 @@ private suspend fun backendPaperBuy(
 ): JSONObject =
     withContext(Dispatchers.IO) {
         val url =
-            "https://redesigned-orbit-4qwqr959pr7ph9gv-8001.app.github.dev/paper/buy?symbol=$symbol&profit_target_pct=$profitTargetPct&stop_loss_pct=$stopLossPct"
+            "https://34-45-135-193.sslip.io/paper/buy?symbol=$symbol&profit_target_pct=$profitTargetPct&stop_loss_pct=$stopLossPct"
 
         val request = Request.Builder()
             .url(url)
             .post(okhttp3.RequestBody.create(null, ByteArray(0)))
             .build()
 
-        OkHttpClient().newCall(request).execute().use { response ->
+        backendClient.newCall(request).execute().use { response ->
             if (!response.isSuccessful) {
                 throw Exception("Paper buy error: HTTP ${response.code}")
             }
@@ -209,14 +220,14 @@ private suspend fun backendPaperBuy(
 private suspend fun backendPaperSell(): JSONObject =
     withContext(Dispatchers.IO) {
         val url =
-            "https://redesigned-orbit-4qwqr959pr7ph9gv-8001.app.github.dev/paper/sell"
+            "https://34-45-135-193.sslip.io/paper/sell"
 
         val request = Request.Builder()
             .url(url)
             .post(okhttp3.RequestBody.create(null, ByteArray(0)))
             .build()
 
-        OkHttpClient().newCall(request).execute().use { response ->
+        backendClient.newCall(request).execute().use { response ->
             if (!response.isSuccessful) {
                 val body = response.body?.string()
                 throw Exception("Paper sell error: HTTP ${response.code} ${body ?: ""}")
@@ -233,14 +244,14 @@ private suspend fun backendPaperSell(): JSONObject =
 private suspend fun backendPaperStatus(): JSONObject =
     withContext(Dispatchers.IO) {
         val url =
-            "https://redesigned-orbit-4qwqr959pr7ph9gv-8001.app.github.dev/paper/status"
+            "https://34-45-135-193.sslip.io/paper/status"
 
         val request = Request.Builder()
             .url(url)
             .get()
             .build()
 
-        OkHttpClient().newCall(request).execute().use { response ->
+        backendClient.newCall(request).execute().use { response ->
             if (!response.isSuccessful) {
                 val body = response.body?.string()
                 throw Exception("Paper status error: HTTP ${response.code} ${body ?: ""}")
@@ -257,11 +268,11 @@ private suspend fun backendPaperStatus(): JSONObject =
 private suspend fun backendPaperAutomationStatus(): JSONObject =
     withContext(Dispatchers.IO) {
         val request = Request.Builder()
-            .url("https://redesigned-orbit-4qwqr959pr7ph9gv-8001.app.github.dev/paper/automation")
+            .url("https://34-45-135-193.sslip.io/paper/automation")
             .get()
             .build()
 
-        OkHttpClient().newCall(request).execute().use { response ->
+        backendClient.newCall(request).execute().use { response ->
             val body = response.body?.string()
                 ?: throw Exception("Automation status returned an empty response")
             if (!response.isSuccessful) {
@@ -279,7 +290,7 @@ private suspend fun configureBackendPaperAutomation(
 ): JSONObject =
     withContext(Dispatchers.IO) {
         val url =
-            "https://redesigned-orbit-4qwqr959pr7ph9gv-8001.app.github.dev/paper/automation" +
+            "https://34-45-135-193.sslip.io/paper/automation" +
                 "?enabled=$enabled" +
                 "&profit_target_pct=$profitTargetPct" +
                 "&stop_loss_pct=$stopLossPct" +
@@ -292,7 +303,7 @@ private suspend fun configureBackendPaperAutomation(
             .post(okhttp3.RequestBody.create(null, ByteArray(0)))
             .build()
 
-        OkHttpClient().newCall(request).execute().use { response ->
+        backendClient.newCall(request).execute().use { response ->
             val body = response.body?.string()
                 ?: throw Exception("Automation update returned an empty response")
             if (!response.isSuccessful) {
@@ -306,14 +317,14 @@ private suspend fun configureBackendPaperAutomation(
 private suspend fun backendPaperCheck(): JSONObject =
     withContext(Dispatchers.IO) {
         val url =
-            "https://redesigned-orbit-4qwqr959pr7ph9gv-8001.app.github.dev/paper/check"
+            "https://34-45-135-193.sslip.io/paper/check"
 
         val request = Request.Builder()
             .url(url)
             .post(okhttp3.RequestBody.create(null, ByteArray(0)))
             .build()
 
-        OkHttpClient().newCall(request).execute().use { response ->
+        backendClient.newCall(request).execute().use { response ->
             if (!response.isSuccessful) {
                 val body = response.body?.string()
                 throw Exception("Paper check error: HTTP ${response.code} ${body ?: ""}")
@@ -330,14 +341,14 @@ private suspend fun backendPaperCheck(): JSONObject =
 private suspend fun backendCurrentPrice(symbol: String): Double =
     withContext(Dispatchers.IO) {
         val url =
-            "https://redesigned-orbit-4qwqr959pr7ph9gv-8001.app.github.dev/market/quote?symbol=$symbol"
+            "https://34-45-135-193.sslip.io/market/quote?symbol=$symbol"
 
         val request = Request.Builder()
             .url(url)
             .get()
             .build()
 
-        OkHttpClient().newCall(request).execute().use { response ->
+        backendClient.newCall(request).execute().use { response ->
             if (!response.isSuccessful) {
                 throw Exception("Quote error: HTTP ${response.code}")
             }

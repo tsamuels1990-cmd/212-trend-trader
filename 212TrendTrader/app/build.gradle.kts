@@ -14,6 +14,8 @@ android {
         targetSdk = 35
         versionCode = 1
         versionName = "0.1.0"
+        val backendApiToken = System.getenv("BACKEND_API_TOKEN") ?: ""
+        buildConfigField("String", "BACKEND_API_TOKEN", "\"$backendApiToken\"")
     }
 
     buildTypes {
@@ -22,7 +24,10 @@ android {
         }
     }
 
-    buildFeatures { compose = true }
+    buildFeatures {
+        compose = true
+        buildConfig = true
+    }
 
     composeOptions {
         kotlinCompilerExtensionVersion = "2.0.21"
