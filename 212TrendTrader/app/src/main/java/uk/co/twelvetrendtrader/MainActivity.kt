@@ -71,7 +71,7 @@ data class LiveAccountSummary(
 private suspend fun scanBackend(minScore: Double, profitTargetPct: Double, stopLossPct: Double): List<Signal> =
     withContext(Dispatchers.IO) {
         val url =
-            "https://34-45-135-193.sslip.io/scanner/scan?min_score=$minScore&profit_target_pct=$profitTargetPct&stop_loss_pct=$stopLossPct"
+            "https://trendtrader212.duckdns.org/scanner/scan?min_score=$minScore&profit_target_pct=$profitTargetPct&stop_loss_pct=$stopLossPct"
 
         val client = backendClient
         val request = Request.Builder()
@@ -120,7 +120,7 @@ private suspend fun scanBackend(minScore: Double, profitTargetPct: Double, stopL
 private suspend fun backendLivePositions(): List<LivePosition> =
     withContext(Dispatchers.IO) {
         val url =
-            "https://34-45-135-193.sslip.io/trading212/positions"
+            "https://trendtrader212.duckdns.org/trading212/positions"
 
         val request = Request.Builder()
             .url(url)
@@ -164,7 +164,7 @@ private suspend fun backendLivePositions(): List<LivePosition> =
 private suspend fun backendLiveAccountSummary(): LiveAccountSummary =
     withContext(Dispatchers.IO) {
         val url =
-            "https://34-45-135-193.sslip.io/trading212/account-summary"
+            "https://trendtrader212.duckdns.org/trading212/account-summary"
 
         val request = Request.Builder().url(url).get().build()
 
@@ -198,7 +198,7 @@ private suspend fun backendPaperBuy(
 ): JSONObject =
     withContext(Dispatchers.IO) {
         val url =
-            "https://34-45-135-193.sslip.io/paper/buy?symbol=$symbol&profit_target_pct=$profitTargetPct&stop_loss_pct=$stopLossPct"
+            "https://trendtrader212.duckdns.org/paper/buy?symbol=$symbol&profit_target_pct=$profitTargetPct&stop_loss_pct=$stopLossPct"
 
         val request = Request.Builder()
             .url(url)
@@ -220,7 +220,7 @@ private suspend fun backendPaperBuy(
 private suspend fun backendPaperSell(): JSONObject =
     withContext(Dispatchers.IO) {
         val url =
-            "https://34-45-135-193.sslip.io/paper/sell"
+            "https://trendtrader212.duckdns.org/paper/sell"
 
         val request = Request.Builder()
             .url(url)
@@ -244,7 +244,7 @@ private suspend fun backendPaperSell(): JSONObject =
 private suspend fun backendPaperStatus(): JSONObject =
     withContext(Dispatchers.IO) {
         val url =
-            "https://34-45-135-193.sslip.io/paper/status"
+            "https://trendtrader212.duckdns.org/paper/status"
 
         val request = Request.Builder()
             .url(url)
@@ -268,7 +268,7 @@ private suspend fun backendPaperStatus(): JSONObject =
 private suspend fun backendPaperAutomationStatus(): JSONObject =
     withContext(Dispatchers.IO) {
         val request = Request.Builder()
-            .url("https://34-45-135-193.sslip.io/paper/automation")
+            .url("https://trendtrader212.duckdns.org/paper/automation")
             .get()
             .build()
 
@@ -290,7 +290,7 @@ private suspend fun configureBackendPaperAutomation(
 ): JSONObject =
     withContext(Dispatchers.IO) {
         val url =
-            "https://34-45-135-193.sslip.io/paper/automation" +
+            "https://trendtrader212.duckdns.org/paper/automation" +
                 "?enabled=$enabled" +
                 "&profit_target_pct=$profitTargetPct" +
                 "&stop_loss_pct=$stopLossPct" +
@@ -317,7 +317,7 @@ private suspend fun configureBackendPaperAutomation(
 private suspend fun backendPaperCheck(): JSONObject =
     withContext(Dispatchers.IO) {
         val url =
-            "https://34-45-135-193.sslip.io/paper/check"
+            "https://trendtrader212.duckdns.org/paper/check"
 
         val request = Request.Builder()
             .url(url)
@@ -341,7 +341,7 @@ private suspend fun backendPaperCheck(): JSONObject =
 private suspend fun backendCurrentPrice(symbol: String): Double =
     withContext(Dispatchers.IO) {
         val url =
-            "https://34-45-135-193.sslip.io/market/quote?symbol=$symbol"
+            "https://trendtrader212.duckdns.org/market/quote?symbol=$symbol"
 
         val request = Request.Builder()
             .url(url)
