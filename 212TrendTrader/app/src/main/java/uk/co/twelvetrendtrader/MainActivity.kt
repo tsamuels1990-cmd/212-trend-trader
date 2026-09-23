@@ -622,13 +622,13 @@ fun App() {
                                     Arrangement.spacedBy(6.dp)
                             ) {
                                 Text(
-                                    if (automationEnabled)
+                                    if (automationLastUpdated == "Connection failed") "PAPER AUTOMATION: STATUS UNVERIFIED" else if (automationEnabled)
                                         "PAPER AUTOMATION: ON"
                                     else
                                         "PAPER AUTOMATION: PAUSED",
                                     style = MaterialTheme.typography.titleMedium,
                                     color =
-                                        if (automationEnabled)
+                                        if (automationLastUpdated == "Connection failed") MaterialTheme.colorScheme.error else if (automationEnabled)
                                             androidx.compose.ui.graphics.Color(0xFF2E7D32)
                                         else
                                             androidx.compose.ui.graphics.Color(0xFFC62828)
