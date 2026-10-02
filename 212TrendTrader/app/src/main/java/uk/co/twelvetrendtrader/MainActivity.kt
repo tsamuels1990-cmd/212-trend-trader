@@ -15,6 +15,7 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.unit.dp
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.delay
+import kotlinx.coroutines.CancellationException
 import java.util.Locale
 import java.text.SimpleDateFormat
 import java.util.Date
@@ -430,12 +431,13 @@ fun App() {
                 addLog("Restored backend paper position: $symbol")
             }
         }.onFailure { e ->
+            if (e is CancellationException) throw e
             addLog("Paper account restore failed: ${e.message}")
         }
     }
 
-    LaunchedEffect(positions) {
-        while (positions.isNotEmpty()) {
+    LaunchedEffect(mode, positions.firstOrNull()?.ticker) {
+        while (mode == "PAPER" && positions.isNotEmpty()) {
             val p = positions.first()
 
             runCatching {
@@ -471,6 +473,7 @@ fun App() {
                     }
                 }
             }.onFailure { e ->
+                if (e is CancellationException) throw e
                 addLog("Price monitor failed: ${e.message}")
             }
 
@@ -557,6 +560,7 @@ fun App() {
                         addLog("AUTO: $automationLastAction")
                     }
                 }.onFailure { e ->
+                    if (e is CancellationException) throw e
                     automationLastUpdated = "Connection failed"
                     addLog("Automation refresh failed: ${e.message}")
                 }
@@ -579,6 +583,7 @@ fun App() {
                     liveLastUpdated = SimpleDateFormat("HH:mm:ss", Locale.UK).format(Date())
                     liveRefreshStatus = "Connected • ${result.first.size} positions"
                 }.onFailure { e ->
+                    if (e is CancellationException) throw e
                     liveRefreshStatus = "Refresh failed"
                     addLog("Live portfolio auto-refresh failed: ${e.message}")
                 }
@@ -695,6 +700,7 @@ fun App() {
                                                     "Automation settings saved and enabled"
                                                 )
                                             }.onFailure { e ->
+                                                if (e is CancellationException) throw e
                                                 addLog(
                                                     "Automation update failed: ${e.message}"
                                                 )
@@ -738,6 +744,7 @@ fun App() {
                                                         "Automation paused"
                                                 addLog(automationLastAction)
                                             }.onFailure { e ->
+                                                if (e is CancellationException) throw e
                                                 addLog(
                                                     "Automation toggle failed: ${e.message}"
                                                 )
@@ -817,6 +824,7 @@ fun App() {
                                         status = "Live Trading 212 portfolio loaded"
                                         addLog("Loaded ${result.first.size} read-only Trading 212 positions")
                                     }.onFailure { e ->
+                                        if (e is CancellationException) throw e
                                         liveRefreshStatus = "Refresh failed"
                                         status = "Live portfolio failed: ${e.message}"
                                         addLog("Live portfolio failed: ${e.message}")
