@@ -6,6 +6,8 @@ import asyncio
 import json
 from pathlib import Path
 from datetime import datetime, timedelta
+from functools import wraps
+from entry_rules import freshness_reason, reentry_reason, record_exit, signal_date
 import httpx
 from fastapi import FastAPI, HTTPException
 
@@ -17,6 +19,8 @@ def default_paper_state():
     return {
         "cash": 1000.0,
         "position": None,
+        "reentry_blocks": {},
+        "trades": [],
         "events": ["Backend paper account ready."],
         "automation": {
             "enabled": True,
@@ -25,6 +29,7 @@ def default_paper_state():
             "min_score": 75.0,
             "scan_interval_seconds": 900,
             "check_interval_seconds": 60,
+            "stop_cooldown_sessions": 2,
             "last_scan_at": None,
             "last_action": "Waiting for first automated scan",
         },
@@ -37,6 +42,8 @@ def load_paper_state():
             if isinstance(data, dict) and "cash" in data and "position" in data:
                 defaults = default_paper_state()
                 data.setdefault("events", [])
+                data.setdefault("reentry_blocks", {})
+                data.setdefault("trades", [])
                 data.setdefault("automation", defaults["automation"])
                 for key, value in defaults["automation"].items():
                     data["automation"].setdefault(key, value)
@@ -56,6 +63,15 @@ def save_paper_state():
 
 PAPER_STATE = load_paper_state()
 PAPER_AUTOMATION_TASK = None
+PAPER_MUTATION_LOCK = asyncio.Lock()
+
+
+def serial_paper_mutation(function):
+    @wraps(function)
+    async def wrapped(*args, **kwargs):
+        async with PAPER_MUTATION_LOCK:
+            return await function(*args, **kwargs)
+    return wrapped
 
 
 def append_paper_event(message):
@@ -80,6 +96,7 @@ async def configure_paper_automation(
     min_score: float = 75.0,
     scan_interval_seconds: int = 900,
     check_interval_seconds: int = 60,
+    stop_cooldown_sessions: int | None = None,
 ):
     if profit_target_pct <= 0 or stop_loss_pct <= 0:
         raise HTTPException(
@@ -99,7 +116,11 @@ async def configure_paper_automation(
             detail="Scan interval must be at least 60 seconds and check interval at least 30 seconds",
         )
 
+    if stop_cooldown_sessions is not None and not 1 <= stop_cooldown_sessions <= 20:
+        raise HTTPException(status_code=400, detail="Stop cooldown must be 1 to 20 daily sessions")
     automation = PAPER_STATE["automation"]
+    if stop_cooldown_sessions is not None:
+        automation["stop_cooldown_sessions"] = stop_cooldown_sessions
     automation.update({
         "enabled": enabled,
         "profit_target_pct": profit_target_pct,
@@ -117,12 +138,29 @@ async def configure_paper_automation(
 
 
 @app.post("/paper/buy")
+@serial_paper_mutation
 async def paper_buy(symbol: str, profit_target_pct: float = 4.0, stop_loss_pct: float = 2.0):
     if PAPER_STATE["position"] is not None:
         raise HTTPException(status_code=400, detail="A paper position is already open")
 
+    symbol = symbol.strip().upper()
+    if profit_target_pct <= 0 or stop_loss_pct <= 0:
+        raise HTTPException(status_code=400, detail="Target and stop must be positive")
+    candles = (await market_candles(symbol=symbol, outputsize="compact"))["candles"]
+    analysis = analyse(candles, min_score=float(PAPER_STATE["automation"].get("min_score", 75)),
+                       profit_target_pct=profit_target_pct, stop_loss_pct=stop_loss_pct)
+    reason = freshness_reason(candles) or reentry_reason(
+        PAPER_STATE, symbol, candles, analysis,
+        int(PAPER_STATE["automation"].get("stop_cooldown_sessions", 2)))
+    save_paper_state()
+    if reason:
+        raise HTTPException(status_code=409, detail=reason)
     quote = await market_quote(symbol)
+    if quote.get("source") != "live":
+        raise HTTPException(status_code=409, detail="Fresh live quote required for a paper entry")
     price = float(quote["price"])
+    if price <= float(analysis.get("sma20", price)):
+        raise HTTPException(status_code=409, detail="Live price no longer supports the bullish daily signal")
 
     cash = float(PAPER_STATE["cash"])
     if cash <= 0:
@@ -137,8 +175,11 @@ async def paper_buy(symbol: str, profit_target_pct: float = 4.0, stop_loss_pct: 
         "target": price * (1.0 + profit_target_pct / 100.0),
         "stop": price * (1.0 - stop_loss_pct / 100.0),
         "profit_target_pct": profit_target_pct,
-        "stop_loss_pct": stop_loss_pct
+        "stop_loss_pct": stop_loss_pct,
+        "entry_signal_date": signal_date(candles),
+        "entry_score": analysis.get("score"),
     }
+    PAPER_STATE["reentry_blocks"].pop(symbol, None)
     PAPER_STATE["cash"] = 0.0
     append_paper_event(
         f"PAPER BUY {symbol.upper()} qty {quantity:.4f} @ {price:.2f}"
@@ -149,6 +190,7 @@ async def paper_buy(symbol: str, profit_target_pct: float = 4.0, stop_loss_pct: 
 
 
 @app.post("/paper/sell")
+@serial_paper_mutation
 async def paper_sell():
     position = PAPER_STATE["position"]
 
@@ -162,6 +204,7 @@ async def paper_sell():
     current = float(quote["price"])
     value = position["quantity"] * current
 
+    record_exit(PAPER_STATE, position, current, "MANUAL SELL")
     PAPER_STATE["cash"] = value
     append_paper_event(
         f"PAPER SELL {position['symbol']} qty {position['quantity']:.4f} @ {current:.2f}"
@@ -173,6 +216,7 @@ async def paper_sell():
 
 
 @app.post("/paper/check")
+@serial_paper_mutation
 async def paper_check():
     position = PAPER_STATE["position"]
 
@@ -204,6 +248,7 @@ async def paper_check():
         )
 
     if reason is not None:
+        record_exit(PAPER_STATE, position, current, reason)
         value = position["quantity"] * current
         PAPER_STATE["cash"] = value
         append_paper_event(
@@ -1078,6 +1123,15 @@ async def scanner_scan(symbols: str = "",
 
             analysis = analyse(candles_response["candles"], min_score=min_score, profit_target_pct=profit_target_pct, stop_loss_pct=stop_loss_pct)
 
+            candles = candles_response["candles"]
+            analysis["signal_date"] = signal_date(candles)
+            entry_reason = freshness_reason(candles) or reentry_reason(
+                PAPER_STATE, symbol, candles, analysis,
+                int(PAPER_STATE["automation"].get("stop_cooldown_sessions", 2)))
+            if entry_reason:
+                analysis["qualified"] = False
+                analysis.setdefault("blockers", []).append(entry_reason)
+                analysis["reason"] = entry_reason
             results.append({
                 "symbol": symbol,
                 "analysis": analysis
@@ -1111,6 +1165,7 @@ async def scanner_scan(symbols: str = "",
                 "error": exc.detail
             })
 
+    save_paper_state()
     results.sort(
         key=lambda x: x.get("analysis", {}).get("score", -1),
         reverse=True

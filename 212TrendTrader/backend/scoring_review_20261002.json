@@ -1,0 +1,1043 @@
+{
+  "symbols": 48,
+  "start": "2026-04-21",
+  "end": "2026-09-30",
+  "validation_start": "2026-08-13",
+  "limitations": "Offline chronological comparison. Never connects to providers or changes paper state.\nKnown limits: current cached universe (selection/survivorship bias), short history,\ndaily OHLC execution assumptions, fixed round-trip friction, no dividends/FX model.\nThis is an exploratory comparison, not proof of a profitable strategy.\n",
+  "results": [
+    {
+      "variant": "baseline",
+      "round_trip_friction_pct": 0.1,
+      "calibration": {
+        "trades": 1,
+        "win_pct": 100.0,
+        "win_95pct_interval": [
+          20.65,
+          100.0
+        ],
+        "average_trade_pct": 3.9,
+        "closed_trade_compound_pct": 3.9,
+        "profit_factor": null,
+        "closed_trade_max_drawdown_pct": 0.0
+      },
+      "validation": {
+        "trades": 4,
+        "win_pct": 0.0,
+        "win_95pct_interval": [
+          0.0,
+          48.99
+        ],
+        "average_trade_pct": -2.1,
+        "closed_trade_compound_pct": -8.14,
+        "profit_factor": 0.0,
+        "closed_trade_max_drawdown_pct": -8.14
+      },
+      "open_position_excluded": {
+        "symbol": "VOD",
+        "entry": 17.56,
+        "quantity": 1,
+        "entry_date": "2026-09-17",
+        "entry_score": 83.57,
+        "target": 18.2624,
+        "stop": 17.2088,
+        "profit_target_pct": 4,
+        "stop_loss_pct": 2
+      },
+      "completed_trades": [
+        {
+          "symbol": "IOSP",
+          "entry": 84.41,
+          "quantity": 1,
+          "entry_date": "2026-07-23",
+          "entry_score": 75.01,
+          "target": 87.7864,
+          "stop": 82.7218,
+          "profit_target_pct": 4,
+          "stop_loss_pct": 2,
+          "exit_date": "2026-08-03",
+          "outcome": "TARGET HIT",
+          "return_pct": 3.9000000000000035
+        },
+        {
+          "symbol": "HARL",
+          "entry": 31.29,
+          "quantity": 1,
+          "entry_date": "2026-08-04",
+          "entry_score": 79.09,
+          "target": 32.5416,
+          "stop": 30.664199999999997,
+          "profit_target_pct": 4,
+          "stop_loss_pct": 2,
+          "exit_date": "2026-08-14",
+          "outcome": "TARGET HIT",
+          "return_pct": 3.9000000000000035
+        },
+        {
+          "symbol": "AIT",
+          "entry": 358.33,
+          "quantity": 1,
+          "entry_date": "2026-08-17",
+          "entry_score": 83.63,
+          "target": 372.6632,
+          "stop": 351.16339999999997,
+          "profit_target_pct": 4,
+          "stop_loss_pct": 2,
+          "exit_date": "2026-08-19",
+          "outcome": "STOP HIT",
+          "return_pct": -2.100000000000002
+        },
+        {
+          "symbol": "LLYVK",
+          "entry": 105.45,
+          "quantity": 1,
+          "entry_date": "2026-08-21",
+          "entry_score": 76.4,
+          "target": 109.668,
+          "stop": 103.341,
+          "profit_target_pct": 4,
+          "stop_loss_pct": 2,
+          "exit_date": "2026-08-27",
+          "outcome": "STOP HIT",
+          "return_pct": -2.100000000000013
+        },
+        {
+          "symbol": "MSFT",
+          "entry": 497.52,
+          "quantity": 1,
+          "entry_date": "2026-09-01",
+          "entry_score": 76.87,
+          "target": 517.4208,
+          "stop": 487.5696,
+          "profit_target_pct": 4,
+          "stop_loss_pct": 2,
+          "exit_date": "2026-09-10",
+          "outcome": "STOP HIT",
+          "return_pct": -2.100000000000002
+        },
+        {
+          "symbol": "AUPH",
+          "entry": 16.35,
+          "quantity": 1,
+          "entry_date": "2026-09-15",
+          "entry_score": 78.23,
+          "target": 17.004,
+          "stop": 16.023,
+          "profit_target_pct": 4,
+          "stop_loss_pct": 2,
+          "exit_date": "2026-09-15",
+          "outcome": "STOP HIT",
+          "return_pct": -2.100000000000013
+        }
+      ]
+    },
+    {
+      "variant": "guarded",
+      "round_trip_friction_pct": 0.1,
+      "calibration": {
+        "trades": 1,
+        "win_pct": 100.0,
+        "win_95pct_interval": [
+          20.65,
+          100.0
+        ],
+        "average_trade_pct": 3.9,
+        "closed_trade_compound_pct": 3.9,
+        "profit_factor": null,
+        "closed_trade_max_drawdown_pct": 0.0
+      },
+      "validation": {
+        "trades": 4,
+        "win_pct": 0.0,
+        "win_95pct_interval": [
+          0.0,
+          48.99
+        ],
+        "average_trade_pct": -2.1,
+        "closed_trade_compound_pct": -8.14,
+        "profit_factor": 0.0,
+        "closed_trade_max_drawdown_pct": -8.14
+      },
+      "open_position_excluded": {
+        "symbol": "VOD",
+        "entry": 17.56,
+        "quantity": 1,
+        "entry_date": "2026-09-17",
+        "entry_score": 83.57,
+        "target": 18.2624,
+        "stop": 17.2088,
+        "profit_target_pct": 4,
+        "stop_loss_pct": 2
+      },
+      "completed_trades": [
+        {
+          "symbol": "IOSP",
+          "entry": 84.41,
+          "quantity": 1,
+          "entry_date": "2026-07-23",
+          "entry_score": 75.01,
+          "target": 87.7864,
+          "stop": 82.7218,
+          "profit_target_pct": 4,
+          "stop_loss_pct": 2,
+          "exit_date": "2026-08-03",
+          "outcome": "TARGET HIT",
+          "return_pct": 3.9000000000000035
+        },
+        {
+          "symbol": "HARL",
+          "entry": 31.29,
+          "quantity": 1,
+          "entry_date": "2026-08-04",
+          "entry_score": 79.09,
+          "target": 32.5416,
+          "stop": 30.664199999999997,
+          "profit_target_pct": 4,
+          "stop_loss_pct": 2,
+          "exit_date": "2026-08-14",
+          "outcome": "TARGET HIT",
+          "return_pct": 3.9000000000000035
+        },
+        {
+          "symbol": "AIT",
+          "entry": 358.33,
+          "quantity": 1,
+          "entry_date": "2026-08-17",
+          "entry_score": 83.63,
+          "target": 372.6632,
+          "stop": 351.16339999999997,
+          "profit_target_pct": 4,
+          "stop_loss_pct": 2,
+          "exit_date": "2026-08-19",
+          "outcome": "STOP HIT",
+          "return_pct": -2.100000000000002
+        },
+        {
+          "symbol": "LLYVK",
+          "entry": 105.45,
+          "quantity": 1,
+          "entry_date": "2026-08-21",
+          "entry_score": 76.4,
+          "target": 109.668,
+          "stop": 103.341,
+          "profit_target_pct": 4,
+          "stop_loss_pct": 2,
+          "exit_date": "2026-08-27",
+          "outcome": "STOP HIT",
+          "return_pct": -2.100000000000013
+        },
+        {
+          "symbol": "MSFT",
+          "entry": 497.52,
+          "quantity": 1,
+          "entry_date": "2026-09-01",
+          "entry_score": 76.87,
+          "target": 517.4208,
+          "stop": 487.5696,
+          "profit_target_pct": 4,
+          "stop_loss_pct": 2,
+          "exit_date": "2026-09-10",
+          "outcome": "STOP HIT",
+          "return_pct": -2.100000000000002
+        },
+        {
+          "symbol": "AUPH",
+          "entry": 16.35,
+          "quantity": 1,
+          "entry_date": "2026-09-15",
+          "entry_score": 78.23,
+          "target": 17.004,
+          "stop": 16.023,
+          "profit_target_pct": 4,
+          "stop_loss_pct": 2,
+          "exit_date": "2026-09-15",
+          "outcome": "STOP HIT",
+          "return_pct": -2.100000000000013
+        }
+      ]
+    },
+    {
+      "variant": "stop1.5ATR",
+      "round_trip_friction_pct": 0.1,
+      "calibration": {
+        "trades": 0,
+        "win_pct": 0,
+        "win_95pct_interval": [
+          0,
+          0
+        ],
+        "average_trade_pct": 0,
+        "closed_trade_compound_pct": 0.0,
+        "profit_factor": null,
+        "closed_trade_max_drawdown_pct": 0.0
+      },
+      "validation": {
+        "trades": 0,
+        "win_pct": 0,
+        "win_95pct_interval": [
+          0,
+          0
+        ],
+        "average_trade_pct": 0,
+        "closed_trade_compound_pct": 0.0,
+        "profit_factor": null,
+        "closed_trade_max_drawdown_pct": 0.0
+      },
+      "open_position_excluded": null,
+      "completed_trades": [
+        {
+          "symbol": "HARL",
+          "entry": 31.29,
+          "quantity": 1,
+          "entry_date": "2026-08-05",
+          "entry_score": 76.48,
+          "target": 32.5416,
+          "stop": 30.664199999999997,
+          "profit_target_pct": 4,
+          "stop_loss_pct": 2,
+          "exit_date": "2026-08-14",
+          "outcome": "TARGET HIT",
+          "return_pct": 3.9000000000000035
+        }
+      ]
+    },
+    {
+      "variant": "rsi55to65",
+      "round_trip_friction_pct": 0.1,
+      "calibration": {
+        "trades": 3,
+        "win_pct": 100.0,
+        "win_95pct_interval": [
+          43.85,
+          100.0
+        ],
+        "average_trade_pct": 4.418,
+        "closed_trade_compound_pct": 13.84,
+        "profit_factor": null,
+        "closed_trade_max_drawdown_pct": 0.0
+      },
+      "validation": {
+        "trades": 6,
+        "win_pct": 16.67,
+        "win_95pct_interval": [
+          3.01,
+          56.35
+        ],
+        "average_trade_pct": -1.1,
+        "closed_trade_compound_pct": -6.56,
+        "profit_factor": 0.37,
+        "closed_trade_max_drawdown_pct": -8.14
+      },
+      "open_position_excluded": {
+        "symbol": "AAPL",
+        "entry": 334.77,
+        "quantity": 1,
+        "entry_date": "2026-09-17",
+        "entry_score": 77.39,
+        "target": 348.1608,
+        "stop": 328.0746,
+        "profit_target_pct": 4,
+        "stop_loss_pct": 2
+      },
+      "completed_trades": [
+        {
+          "symbol": "IOSP",
+          "entry": 84.41,
+          "quantity": 1,
+          "entry_date": "2026-07-23",
+          "entry_score": 75.01,
+          "target": 87.7864,
+          "stop": 82.7218,
+          "profit_target_pct": 4,
+          "stop_loss_pct": 2,
+          "exit_date": "2026-08-03",
+          "outcome": "TARGET HIT",
+          "return_pct": 3.9000000000000035
+        },
+        {
+          "symbol": "IOSP",
+          "entry": 85.53,
+          "quantity": 1,
+          "entry_date": "2026-08-04",
+          "entry_score": 76.83,
+          "target": 88.9512,
+          "stop": 83.8194,
+          "profit_target_pct": 4,
+          "stop_loss_pct": 2,
+          "exit_date": "2026-08-05",
+          "outcome": "TARGET HIT",
+          "return_pct": 5.453606921548005
+        },
+        {
+          "symbol": "WTBA",
+          "entry": 28.25,
+          "quantity": 1,
+          "entry_date": "2026-08-07",
+          "entry_score": 83.5,
+          "target": 29.380000000000003,
+          "stop": 27.685,
+          "profit_target_pct": 4,
+          "stop_loss_pct": 2,
+          "exit_date": "2026-08-12",
+          "outcome": "TARGET HIT",
+          "return_pct": 3.9000000000000035
+        },
+        {
+          "symbol": "AIT",
+          "entry": 365.95,
+          "quantity": 1,
+          "entry_date": "2026-08-13",
+          "entry_score": 82.67,
+          "target": 380.588,
+          "stop": 358.631,
+          "profit_target_pct": 4,
+          "stop_loss_pct": 2,
+          "exit_date": "2026-08-13",
+          "outcome": "STOP HIT",
+          "return_pct": -2.100000000000002
+        },
+        {
+          "symbol": "LLYVK",
+          "entry": 108.13,
+          "quantity": 1,
+          "entry_date": "2026-08-17",
+          "entry_score": 78.29,
+          "target": 112.4552,
+          "stop": 105.9674,
+          "profit_target_pct": 4,
+          "stop_loss_pct": 2,
+          "exit_date": "2026-08-17",
+          "outcome": "STOP HIT",
+          "return_pct": -2.100000000000002
+        },
+        {
+          "symbol": "AIT",
+          "entry": 357.97,
+          "quantity": 1,
+          "entry_date": "2026-08-18",
+          "entry_score": 82.62,
+          "target": 372.28880000000004,
+          "stop": 350.8106,
+          "profit_target_pct": 4,
+          "stop_loss_pct": 2,
+          "exit_date": "2026-08-19",
+          "outcome": "STOP HIT",
+          "return_pct": -2.100000000000002
+        },
+        {
+          "symbol": "LLYVK",
+          "entry": 108.11,
+          "quantity": 1,
+          "entry_date": "2026-08-26",
+          "entry_score": 76.62,
+          "target": 112.4344,
+          "stop": 105.9478,
+          "profit_target_pct": 4,
+          "stop_loss_pct": 2,
+          "exit_date": "2026-08-26",
+          "outcome": "STOP HIT",
+          "return_pct": -2.100000000000002
+        },
+        {
+          "symbol": "SRUUF",
+          "entry": 19.8,
+          "quantity": 1,
+          "entry_date": "2026-09-01",
+          "entry_score": 75.39,
+          "target": 20.592000000000002,
+          "stop": 19.404,
+          "profit_target_pct": 4,
+          "stop_loss_pct": 2,
+          "exit_date": "2026-09-08",
+          "outcome": "TARGET HIT",
+          "return_pct": 3.9000000000000035
+        },
+        {
+          "symbol": "AUPH",
+          "entry": 16.35,
+          "quantity": 1,
+          "entry_date": "2026-09-15",
+          "entry_score": 78.23,
+          "target": 17.004,
+          "stop": 16.023,
+          "profit_target_pct": 4,
+          "stop_loss_pct": 2,
+          "exit_date": "2026-09-15",
+          "outcome": "STOP HIT",
+          "return_pct": -2.100000000000013
+        }
+      ]
+    },
+    {
+      "variant": "score85",
+      "round_trip_friction_pct": 0.1,
+      "calibration": {
+        "trades": 0,
+        "win_pct": 0,
+        "win_95pct_interval": [
+          0,
+          0
+        ],
+        "average_trade_pct": 0,
+        "closed_trade_compound_pct": 0.0,
+        "profit_factor": null,
+        "closed_trade_max_drawdown_pct": 0.0
+      },
+      "validation": {
+        "trades": 0,
+        "win_pct": 0,
+        "win_95pct_interval": [
+          0,
+          0
+        ],
+        "average_trade_pct": 0,
+        "closed_trade_compound_pct": 0.0,
+        "profit_factor": null,
+        "closed_trade_max_drawdown_pct": 0.0
+      },
+      "open_position_excluded": {
+        "symbol": "VOD",
+        "entry": 17.2,
+        "quantity": 1,
+        "entry_date": "2026-09-08",
+        "entry_score": 86.07,
+        "target": 17.887999999999998,
+        "stop": 16.855999999999998,
+        "profit_target_pct": 4,
+        "stop_loss_pct": 2
+      },
+      "completed_trades": [
+        {
+          "symbol": "HARL",
+          "entry": 31.1,
+          "quantity": 1,
+          "entry_date": "2026-07-30",
+          "entry_score": 89.36,
+          "target": 32.344,
+          "stop": 30.478,
+          "profit_target_pct": 4,
+          "stop_loss_pct": 2,
+          "exit_date": "2026-08-14",
+          "outcome": "TARGET HIT",
+          "return_pct": 4.4016077170418
+        }
+      ]
+    },
+    {
+      "variant": "baseline",
+      "round_trip_friction_pct": 0.3,
+      "calibration": {
+        "trades": 1,
+        "win_pct": 100.0,
+        "win_95pct_interval": [
+          20.65,
+          100.0
+        ],
+        "average_trade_pct": 3.7,
+        "closed_trade_compound_pct": 3.7,
+        "profit_factor": null,
+        "closed_trade_max_drawdown_pct": 0.0
+      },
+      "validation": {
+        "trades": 4,
+        "win_pct": 0.0,
+        "win_95pct_interval": [
+          0.0,
+          48.99
+        ],
+        "average_trade_pct": -2.3,
+        "closed_trade_compound_pct": -8.89,
+        "profit_factor": 0.0,
+        "closed_trade_max_drawdown_pct": -8.89
+      },
+      "open_position_excluded": {
+        "symbol": "VOD",
+        "entry": 17.56,
+        "quantity": 1,
+        "entry_date": "2026-09-17",
+        "entry_score": 83.57,
+        "target": 18.2624,
+        "stop": 17.2088,
+        "profit_target_pct": 4,
+        "stop_loss_pct": 2
+      },
+      "completed_trades": [
+        {
+          "symbol": "IOSP",
+          "entry": 84.41,
+          "quantity": 1,
+          "entry_date": "2026-07-23",
+          "entry_score": 75.01,
+          "target": 87.7864,
+          "stop": 82.7218,
+          "profit_target_pct": 4,
+          "stop_loss_pct": 2,
+          "exit_date": "2026-08-03",
+          "outcome": "TARGET HIT",
+          "return_pct": 3.7000000000000037
+        },
+        {
+          "symbol": "HARL",
+          "entry": 31.29,
+          "quantity": 1,
+          "entry_date": "2026-08-04",
+          "entry_score": 79.09,
+          "target": 32.5416,
+          "stop": 30.664199999999997,
+          "profit_target_pct": 4,
+          "stop_loss_pct": 2,
+          "exit_date": "2026-08-14",
+          "outcome": "TARGET HIT",
+          "return_pct": 3.7000000000000037
+        },
+        {
+          "symbol": "AIT",
+          "entry": 358.33,
+          "quantity": 1,
+          "entry_date": "2026-08-17",
+          "entry_score": 83.63,
+          "target": 372.6632,
+          "stop": 351.16339999999997,
+          "profit_target_pct": 4,
+          "stop_loss_pct": 2,
+          "exit_date": "2026-08-19",
+          "outcome": "STOP HIT",
+          "return_pct": -2.3000000000000016
+        },
+        {
+          "symbol": "LLYVK",
+          "entry": 105.45,
+          "quantity": 1,
+          "entry_date": "2026-08-21",
+          "entry_score": 76.4,
+          "target": 109.668,
+          "stop": 103.341,
+          "profit_target_pct": 4,
+          "stop_loss_pct": 2,
+          "exit_date": "2026-08-27",
+          "outcome": "STOP HIT",
+          "return_pct": -2.3000000000000127
+        },
+        {
+          "symbol": "MSFT",
+          "entry": 497.52,
+          "quantity": 1,
+          "entry_date": "2026-09-01",
+          "entry_score": 76.87,
+          "target": 517.4208,
+          "stop": 487.5696,
+          "profit_target_pct": 4,
+          "stop_loss_pct": 2,
+          "exit_date": "2026-09-10",
+          "outcome": "STOP HIT",
+          "return_pct": -2.3000000000000016
+        },
+        {
+          "symbol": "AUPH",
+          "entry": 16.35,
+          "quantity": 1,
+          "entry_date": "2026-09-15",
+          "entry_score": 78.23,
+          "target": 17.004,
+          "stop": 16.023,
+          "profit_target_pct": 4,
+          "stop_loss_pct": 2,
+          "exit_date": "2026-09-15",
+          "outcome": "STOP HIT",
+          "return_pct": -2.3000000000000127
+        }
+      ]
+    },
+    {
+      "variant": "guarded",
+      "round_trip_friction_pct": 0.3,
+      "calibration": {
+        "trades": 1,
+        "win_pct": 100.0,
+        "win_95pct_interval": [
+          20.65,
+          100.0
+        ],
+        "average_trade_pct": 3.7,
+        "closed_trade_compound_pct": 3.7,
+        "profit_factor": null,
+        "closed_trade_max_drawdown_pct": 0.0
+      },
+      "validation": {
+        "trades": 4,
+        "win_pct": 0.0,
+        "win_95pct_interval": [
+          0.0,
+          48.99
+        ],
+        "average_trade_pct": -2.3,
+        "closed_trade_compound_pct": -8.89,
+        "profit_factor": 0.0,
+        "closed_trade_max_drawdown_pct": -8.89
+      },
+      "open_position_excluded": {
+        "symbol": "VOD",
+        "entry": 17.56,
+        "quantity": 1,
+        "entry_date": "2026-09-17",
+        "entry_score": 83.57,
+        "target": 18.2624,
+        "stop": 17.2088,
+        "profit_target_pct": 4,
+        "stop_loss_pct": 2
+      },
+      "completed_trades": [
+        {
+          "symbol": "IOSP",
+          "entry": 84.41,
+          "quantity": 1,
+          "entry_date": "2026-07-23",
+          "entry_score": 75.01,
+          "target": 87.7864,
+          "stop": 82.7218,
+          "profit_target_pct": 4,
+          "stop_loss_pct": 2,
+          "exit_date": "2026-08-03",
+          "outcome": "TARGET HIT",
+          "return_pct": 3.7000000000000037
+        },
+        {
+          "symbol": "HARL",
+          "entry": 31.29,
+          "quantity": 1,
+          "entry_date": "2026-08-04",
+          "entry_score": 79.09,
+          "target": 32.5416,
+          "stop": 30.664199999999997,
+          "profit_target_pct": 4,
+          "stop_loss_pct": 2,
+          "exit_date": "2026-08-14",
+          "outcome": "TARGET HIT",
+          "return_pct": 3.7000000000000037
+        },
+        {
+          "symbol": "AIT",
+          "entry": 358.33,
+          "quantity": 1,
+          "entry_date": "2026-08-17",
+          "entry_score": 83.63,
+          "target": 372.6632,
+          "stop": 351.16339999999997,
+          "profit_target_pct": 4,
+          "stop_loss_pct": 2,
+          "exit_date": "2026-08-19",
+          "outcome": "STOP HIT",
+          "return_pct": -2.3000000000000016
+        },
+        {
+          "symbol": "LLYVK",
+          "entry": 105.45,
+          "quantity": 1,
+          "entry_date": "2026-08-21",
+          "entry_score": 76.4,
+          "target": 109.668,
+          "stop": 103.341,
+          "profit_target_pct": 4,
+          "stop_loss_pct": 2,
+          "exit_date": "2026-08-27",
+          "outcome": "STOP HIT",
+          "return_pct": -2.3000000000000127
+        },
+        {
+          "symbol": "MSFT",
+          "entry": 497.52,
+          "quantity": 1,
+          "entry_date": "2026-09-01",
+          "entry_score": 76.87,
+          "target": 517.4208,
+          "stop": 487.5696,
+          "profit_target_pct": 4,
+          "stop_loss_pct": 2,
+          "exit_date": "2026-09-10",
+          "outcome": "STOP HIT",
+          "return_pct": -2.3000000000000016
+        },
+        {
+          "symbol": "AUPH",
+          "entry": 16.35,
+          "quantity": 1,
+          "entry_date": "2026-09-15",
+          "entry_score": 78.23,
+          "target": 17.004,
+          "stop": 16.023,
+          "profit_target_pct": 4,
+          "stop_loss_pct": 2,
+          "exit_date": "2026-09-15",
+          "outcome": "STOP HIT",
+          "return_pct": -2.3000000000000127
+        }
+      ]
+    },
+    {
+      "variant": "stop1.5ATR",
+      "round_trip_friction_pct": 0.3,
+      "calibration": {
+        "trades": 0,
+        "win_pct": 0,
+        "win_95pct_interval": [
+          0,
+          0
+        ],
+        "average_trade_pct": 0,
+        "closed_trade_compound_pct": 0.0,
+        "profit_factor": null,
+        "closed_trade_max_drawdown_pct": 0.0
+      },
+      "validation": {
+        "trades": 0,
+        "win_pct": 0,
+        "win_95pct_interval": [
+          0,
+          0
+        ],
+        "average_trade_pct": 0,
+        "closed_trade_compound_pct": 0.0,
+        "profit_factor": null,
+        "closed_trade_max_drawdown_pct": 0.0
+      },
+      "open_position_excluded": null,
+      "completed_trades": [
+        {
+          "symbol": "HARL",
+          "entry": 31.29,
+          "quantity": 1,
+          "entry_date": "2026-08-05",
+          "entry_score": 76.48,
+          "target": 32.5416,
+          "stop": 30.664199999999997,
+          "profit_target_pct": 4,
+          "stop_loss_pct": 2,
+          "exit_date": "2026-08-14",
+          "outcome": "TARGET HIT",
+          "return_pct": 3.7000000000000037
+        }
+      ]
+    },
+    {
+      "variant": "rsi55to65",
+      "round_trip_friction_pct": 0.3,
+      "calibration": {
+        "trades": 3,
+        "win_pct": 100.0,
+        "win_95pct_interval": [
+          43.85,
+          100.0
+        ],
+        "average_trade_pct": 4.218,
+        "closed_trade_compound_pct": 13.19,
+        "profit_factor": null,
+        "closed_trade_max_drawdown_pct": 0.0
+      },
+      "validation": {
+        "trades": 6,
+        "win_pct": 16.67,
+        "win_95pct_interval": [
+          3.01,
+          56.35
+        ],
+        "average_trade_pct": -1.3,
+        "closed_trade_compound_pct": -7.69,
+        "profit_factor": 0.32,
+        "closed_trade_max_drawdown_pct": -8.89
+      },
+      "open_position_excluded": {
+        "symbol": "AAPL",
+        "entry": 334.77,
+        "quantity": 1,
+        "entry_date": "2026-09-17",
+        "entry_score": 77.39,
+        "target": 348.1608,
+        "stop": 328.0746,
+        "profit_target_pct": 4,
+        "stop_loss_pct": 2
+      },
+      "completed_trades": [
+        {
+          "symbol": "IOSP",
+          "entry": 84.41,
+          "quantity": 1,
+          "entry_date": "2026-07-23",
+          "entry_score": 75.01,
+          "target": 87.7864,
+          "stop": 82.7218,
+          "profit_target_pct": 4,
+          "stop_loss_pct": 2,
+          "exit_date": "2026-08-03",
+          "outcome": "TARGET HIT",
+          "return_pct": 3.7000000000000037
+        },
+        {
+          "symbol": "IOSP",
+          "entry": 85.53,
+          "quantity": 1,
+          "entry_date": "2026-08-04",
+          "entry_score": 76.83,
+          "target": 88.9512,
+          "stop": 83.8194,
+          "profit_target_pct": 4,
+          "stop_loss_pct": 2,
+          "exit_date": "2026-08-05",
+          "outcome": "TARGET HIT",
+          "return_pct": 5.253606921548005
+        },
+        {
+          "symbol": "WTBA",
+          "entry": 28.25,
+          "quantity": 1,
+          "entry_date": "2026-08-07",
+          "entry_score": 83.5,
+          "target": 29.380000000000003,
+          "stop": 27.685,
+          "profit_target_pct": 4,
+          "stop_loss_pct": 2,
+          "exit_date": "2026-08-12",
+          "outcome": "TARGET HIT",
+          "return_pct": 3.7000000000000037
+        },
+        {
+          "symbol": "AIT",
+          "entry": 365.95,
+          "quantity": 1,
+          "entry_date": "2026-08-13",
+          "entry_score": 82.67,
+          "target": 380.588,
+          "stop": 358.631,
+          "profit_target_pct": 4,
+          "stop_loss_pct": 2,
+          "exit_date": "2026-08-13",
+          "outcome": "STOP HIT",
+          "return_pct": -2.3000000000000016
+        },
+        {
+          "symbol": "LLYVK",
+          "entry": 108.13,
+          "quantity": 1,
+          "entry_date": "2026-08-17",
+          "entry_score": 78.29,
+          "target": 112.4552,
+          "stop": 105.9674,
+          "profit_target_pct": 4,
+          "stop_loss_pct": 2,
+          "exit_date": "2026-08-17",
+          "outcome": "STOP HIT",
+          "return_pct": -2.3000000000000016
+        },
+        {
+          "symbol": "AIT",
+          "entry": 357.97,
+          "quantity": 1,
+          "entry_date": "2026-08-18",
+          "entry_score": 82.62,
+          "target": 372.28880000000004,
+          "stop": 350.8106,
+          "profit_target_pct": 4,
+          "stop_loss_pct": 2,
+          "exit_date": "2026-08-19",
+          "outcome": "STOP HIT",
+          "return_pct": -2.3000000000000016
+        },
+        {
+          "symbol": "LLYVK",
+          "entry": 108.11,
+          "quantity": 1,
+          "entry_date": "2026-08-26",
+          "entry_score": 76.62,
+          "target": 112.4344,
+          "stop": 105.9478,
+          "profit_target_pct": 4,
+          "stop_loss_pct": 2,
+          "exit_date": "2026-08-26",
+          "outcome": "STOP HIT",
+          "return_pct": -2.3000000000000016
+        },
+        {
+          "symbol": "SRUUF",
+          "entry": 19.8,
+          "quantity": 1,
+          "entry_date": "2026-09-01",
+          "entry_score": 75.39,
+          "target": 20.592000000000002,
+          "stop": 19.404,
+          "profit_target_pct": 4,
+          "stop_loss_pct": 2,
+          "exit_date": "2026-09-08",
+          "outcome": "TARGET HIT",
+          "return_pct": 3.7000000000000037
+        },
+        {
+          "symbol": "AUPH",
+          "entry": 16.35,
+          "quantity": 1,
+          "entry_date": "2026-09-15",
+          "entry_score": 78.23,
+          "target": 17.004,
+          "stop": 16.023,
+          "profit_target_pct": 4,
+          "stop_loss_pct": 2,
+          "exit_date": "2026-09-15",
+          "outcome": "STOP HIT",
+          "return_pct": -2.3000000000000127
+        }
+      ]
+    },
+    {
+      "variant": "score85",
+      "round_trip_friction_pct": 0.3,
+      "calibration": {
+        "trades": 0,
+        "win_pct": 0,
+        "win_95pct_interval": [
+          0,
+          0
+        ],
+        "average_trade_pct": 0,
+        "closed_trade_compound_pct": 0.0,
+        "profit_factor": null,
+        "closed_trade_max_drawdown_pct": 0.0
+      },
+      "validation": {
+        "trades": 0,
+        "win_pct": 0,
+        "win_95pct_interval": [
+          0,
+          0
+        ],
+        "average_trade_pct": 0,
+        "closed_trade_compound_pct": 0.0,
+        "profit_factor": null,
+        "closed_trade_max_drawdown_pct": 0.0
+      },
+      "open_position_excluded": {
+        "symbol": "VOD",
+        "entry": 17.2,
+        "quantity": 1,
+        "entry_date": "2026-09-08",
+        "entry_score": 86.07,
+        "target": 17.887999999999998,
+        "stop": 16.855999999999998,
+        "profit_target_pct": 4,
+        "stop_loss_pct": 2
+      },
+      "completed_trades": [
+        {
+          "symbol": "HARL",
+          "entry": 31.1,
+          "quantity": 1,
+          "entry_date": "2026-07-30",
+          "entry_score": 89.36,
+          "target": 32.344,
+          "stop": 30.478,
+          "profit_target_pct": 4,
+          "stop_loss_pct": 2,
+          "exit_date": "2026-08-14",
+          "outcome": "TARGET HIT",
+          "return_pct": 4.2016077170418
+        }
+      ]
+    }
+  ]
+}
