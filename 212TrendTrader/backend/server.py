@@ -394,7 +394,10 @@ async def market_quote(symbol: str):
                     quote_time = int(quote_time)
                     age_seconds = datetime.utcnow().timestamp() - quote_time
 
-                    if price > 0 and -60 <= age_seconds <= 1200:
+                    # Keep a valid timestamped close for display after it ages
+                    # out of live trading eligibility, instead of reverting to
+                    # an older daily cache. Delayed quotes cannot trigger trades.
+                    if price > 0 and age_seconds >= -60:
                         return {
                             "symbol": symbol,
                             "price": price,
@@ -403,7 +406,7 @@ async def market_quote(symbol: str):
                             ).date().isoformat(),
                             "quote_timestamp": quote_time,
                             "quote_age_seconds": max(0, int(age_seconds)),
-                            "source": "live",
+                            "source": "live" if age_seconds <= 1200 else "delayed",
                             "provider": "yahoo_intraday",
                         }
     except (httpx.HTTPError, ValueError, TypeError, KeyError, IndexError):
