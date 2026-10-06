@@ -87,7 +87,9 @@ def analyse(candles, min_score: float = 75.0,
     rsi_score = _rsi_quality(rsi_value)
     volume = _clamp((volume_ratio - 0.7) / 0.8)
 
-    # Estimate whether the requested target is plausible within roughly 10 sessions.
+    # Volatility proxy only: this does not estimate upward direction or
+    # the probability of reaching the target before the stop. Weights are
+    # heuristic and must be validated outside the calibration period.
     expected_ten_day_move_pct = atr_pct * math.sqrt(10.0)
     target_feasibility = _clamp(expected_ten_day_move_pct / profit_target_pct)
     stop_noise_ratio = stop_loss_pct / atr_pct if atr_pct > 0 else 0.0
@@ -115,7 +117,7 @@ def analyse(candles, min_score: float = 75.0,
 
     qualified = score >= min_score and not blockers
     reason = (
-        "Qualified: bullish trend with target and stop supported by recent movement"
+        "Matched heuristic entry rules; success probability is not calibrated"
         if qualified else "; ".join(blockers) or f"Score {score:.2f} is below minimum {min_score:.2f}"
     )
 
@@ -130,6 +132,8 @@ def analyse(candles, min_score: float = 75.0,
         "atr_pct": round(atr_pct, 2),
         "volume_ratio": round(volume_ratio, 2),
         "expected_ten_day_move_pct": round(expected_ten_day_move_pct, 2),
+        "volatility_proxy_ten_day_pct": round(expected_ten_day_move_pct, 2),
+        "score_is_probability": False,
         "target_feasibility": round(target_feasibility, 3),
         "stop_noise_ratio": round(stop_noise_ratio, 2),
         "components": {key: round(value, 2) for key, value in components.items()},

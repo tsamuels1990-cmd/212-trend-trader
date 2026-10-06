@@ -15,6 +15,7 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.unit.dp
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.delay
+import kotlinx.coroutines.CancellationException
 import java.util.Locale
 import java.text.SimpleDateFormat
 import java.util.Date
@@ -68,12 +69,20 @@ data class LiveAccountSummary(
 )
 
 
-private suspend fun scanBackend(minScore: Double, profitTargetPct: Double, stopLossPct: Double): List<Signal> =
+private data class BackendScanResult(val signals: List<Signal>, val analysed: Int, val cached: Int, val universe: Int)
+
+private fun backendFailure(label: String, code: Int, body: String?): Exception {
+    val detail = runCatching { JSONObject(body ?: "{}").optString("detail", "") }
+        .getOrDefault("").take(300)
+    return Exception("$label: HTTP $code" + if (detail.isBlank()) "" else " — $detail")
+}
+
+private suspend fun scanBackend(minScore: Double, profitTargetPct: Double, stopLossPct: Double): BackendScanResult =
     withContext(Dispatchers.IO) {
         val url =
             "https://trendtrader212.duckdns.org/scanner/scan?min_score=$minScore&profit_target_pct=$profitTargetPct&stop_loss_pct=$stopLossPct"
 
-        val client = backendClient
+        val client = backendClient.newBuilder().readTimeout(180, java.util.concurrent.TimeUnit.SECONDS).build()
         val request = Request.Builder()
             .url(url)
             .get()
@@ -81,7 +90,7 @@ private suspend fun scanBackend(minScore: Double, profitTargetPct: Double, stopL
 
         client.newCall(request).execute().use { response ->
             if (!response.isSuccessful) {
-                throw Exception("Backend error: HTTP ${response.code}")
+                throw backendFailure("Backend error", response.code, response.body?.string())
             }
 
             val body = response.body?.string()
@@ -107,11 +116,11 @@ private suspend fun scanBackend(minScore: Double, profitTargetPct: Double, stopL
                     price = price,
                     target = price * (1.0 + profitPct / 100.0),
                     stop = price * (1.0 - stopPct / 100.0),
-                    reasons = listOf("Qualified by backend scanner")
+                    reasons = listOf("Qualified with a fresh market quote")
                 )
             }
 
-            signals
+            BackendScanResult(signals, root.optInt("valid_count"), root.optInt("cached_count"), root.optInt("universe_count"))
         }
     }
 
@@ -207,7 +216,7 @@ private suspend fun backendPaperBuy(
 
         backendClient.newCall(request).execute().use { response ->
             if (!response.isSuccessful) {
-                throw Exception("Paper buy error: HTTP ${response.code}")
+                throw backendFailure("Paper buy error", response.code, response.body?.string())
             }
 
             val body = response.body?.string()
@@ -430,12 +439,13 @@ fun App() {
                 addLog("Restored backend paper position: $symbol")
             }
         }.onFailure { e ->
+            if (e is CancellationException) throw e
             addLog("Paper account restore failed: ${e.message}")
         }
     }
 
-    LaunchedEffect(positions) {
-        while (positions.isNotEmpty()) {
+    LaunchedEffect(mode, positions.firstOrNull()?.ticker) {
+        while (mode == "PAPER" && positions.isNotEmpty()) {
             val p = positions.first()
 
             runCatching {
@@ -471,6 +481,7 @@ fun App() {
                     }
                 }
             }.onFailure { e ->
+                if (e is CancellationException) throw e
                 addLog("Price monitor failed: ${e.message}")
             }
 
@@ -557,6 +568,7 @@ fun App() {
                         addLog("AUTO: $automationLastAction")
                     }
                 }.onFailure { e ->
+                    if (e is CancellationException) throw e
                     automationLastUpdated = "Connection failed"
                     addLog("Automation refresh failed: ${e.message}")
                 }
@@ -579,6 +591,7 @@ fun App() {
                     liveLastUpdated = SimpleDateFormat("HH:mm:ss", Locale.UK).format(Date())
                     liveRefreshStatus = "Connected • ${result.first.size} positions"
                 }.onFailure { e ->
+                    if (e is CancellationException) throw e
                     liveRefreshStatus = "Refresh failed"
                     addLog("Live portfolio auto-refresh failed: ${e.message}")
                 }
@@ -695,6 +708,7 @@ fun App() {
                                                     "Automation settings saved and enabled"
                                                 )
                                             }.onFailure { e ->
+                                                if (e is CancellationException) throw e
                                                 addLog(
                                                     "Automation update failed: ${e.message}"
                                                 )
@@ -738,6 +752,7 @@ fun App() {
                                                         "Automation paused"
                                                 addLog(automationLastAction)
                                             }.onFailure { e ->
+                                                if (e is CancellationException) throw e
                                                 addLog(
                                                     "Automation toggle failed: ${e.message}"
                                                 )
@@ -817,6 +832,7 @@ fun App() {
                                         status = "Live Trading 212 portfolio loaded"
                                         addLog("Loaded ${result.first.size} read-only Trading 212 positions")
                                     }.onFailure { e ->
+                                        if (e is CancellationException) throw e
                                         liveRefreshStatus = "Refresh failed"
                                         status = "Live portfolio failed: ${e.message}"
                                         addLog("Live portfolio failed: ${e.message}")
@@ -891,21 +907,23 @@ fun App() {
                             scanning = true
                             scope.launch {
                                 try {
-                                    val found = runCatching {
-                                scanBackend(
-                                    minScore.toDoubleOrNull() ?: 75.0,
-                                    profitTarget.toDoubleOrNull() ?: 4.0,
-                                    stopLoss.toDoubleOrNull() ?: 2.0
-                                )
-                            }.getOrElse { e ->
-                                status = "Scan failed: ${e.message}"
-                                addLog("Backend scan failed: ${e.message}")
-                                emptyList()
-                            }
-
-                            signals = found
-                            status = "Scan complete → ${found.size} qualifying signals"
-                            addLog("Scan completed. Top: ${found.firstOrNull()?.symbol ?: "none"}")
+                                    try {
+                                        val result = scanBackend(
+                                            minScore.toDoubleOrNull() ?: 75.0,
+                                            profitTarget.toDoubleOrNull() ?: 4.0,
+                                            stopLoss.toDoubleOrNull() ?: 2.0
+                                        )
+                                        signals = result.signals
+                                        status = "Analysed ${result.analysed} stocks • ${result.signals.size} eligible signals • ${result.cached} cached / ${result.universe} US stocks"
+                                        addLog(status)
+                                        addLog("Top eligible: ${signals.firstOrNull()?.symbol ?: "none"}")
+                                    } catch (e: CancellationException) {
+                                        throw e
+                                    } catch (e: Exception) {
+                                        signals = emptyList()
+                                        status = "Scan failed: ${e.message}"
+                                        addLog(status)
+                                    }
                                 } finally { scanning = false }
                             }
                         },

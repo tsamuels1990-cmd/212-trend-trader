@@ -6,7 +6,10 @@ import asyncio
 import json
 from pathlib import Path
 from datetime import datetime, timedelta
+from functools import wraps
+from entry_rules import freshness_reason, reentry_reason, record_exit, signal_date
 import httpx
+from broad_market import yahoo_history, quote_entry_reason, warm_history_batch, HISTORY_DAILY_LIMIT, HISTORY_INTERVAL_SECONDS
 from fastapi import FastAPI, HTTPException
 
 app = FastAPI(title="212 Trend Trader Backend")
@@ -17,6 +20,8 @@ def default_paper_state():
     return {
         "cash": 1000.0,
         "position": None,
+        "reentry_blocks": {},
+        "trades": [],
         "events": ["Backend paper account ready."],
         "automation": {
             "enabled": True,
@@ -25,6 +30,7 @@ def default_paper_state():
             "min_score": 75.0,
             "scan_interval_seconds": 900,
             "check_interval_seconds": 60,
+            "stop_cooldown_sessions": 2,
             "last_scan_at": None,
             "last_action": "Waiting for first automated scan",
         },
@@ -37,6 +43,8 @@ def load_paper_state():
             if isinstance(data, dict) and "cash" in data and "position" in data:
                 defaults = default_paper_state()
                 data.setdefault("events", [])
+                data.setdefault("reentry_blocks", {})
+                data.setdefault("trades", [])
                 data.setdefault("automation", defaults["automation"])
                 for key, value in defaults["automation"].items():
                     data["automation"].setdefault(key, value)
@@ -56,6 +64,15 @@ def save_paper_state():
 
 PAPER_STATE = load_paper_state()
 PAPER_AUTOMATION_TASK = None
+PAPER_MUTATION_LOCK = asyncio.Lock()
+
+
+def serial_paper_mutation(function):
+    @wraps(function)
+    async def wrapped(*args, **kwargs):
+        async with PAPER_MUTATION_LOCK:
+            return await function(*args, **kwargs)
+    return wrapped
 
 
 def append_paper_event(message):
@@ -80,6 +97,7 @@ async def configure_paper_automation(
     min_score: float = 75.0,
     scan_interval_seconds: int = 900,
     check_interval_seconds: int = 60,
+    stop_cooldown_sessions: int | None = None,
 ):
     if profit_target_pct <= 0 or stop_loss_pct <= 0:
         raise HTTPException(
@@ -99,7 +117,11 @@ async def configure_paper_automation(
             detail="Scan interval must be at least 60 seconds and check interval at least 30 seconds",
         )
 
+    if stop_cooldown_sessions is not None and not 1 <= stop_cooldown_sessions <= 20:
+        raise HTTPException(status_code=400, detail="Stop cooldown must be 1 to 20 daily sessions")
     automation = PAPER_STATE["automation"]
+    if stop_cooldown_sessions is not None:
+        automation["stop_cooldown_sessions"] = stop_cooldown_sessions
     automation.update({
         "enabled": enabled,
         "profit_target_pct": profit_target_pct,
@@ -117,11 +139,27 @@ async def configure_paper_automation(
 
 
 @app.post("/paper/buy")
+@serial_paper_mutation
 async def paper_buy(symbol: str, profit_target_pct: float = 4.0, stop_loss_pct: float = 2.0):
     if PAPER_STATE["position"] is not None:
         raise HTTPException(status_code=400, detail="A paper position is already open")
 
+    symbol = symbol.strip().upper()
+    if profit_target_pct <= 0 or stop_loss_pct <= 0:
+        raise HTTPException(status_code=400, detail="Target and stop must be positive")
+    candles = (await market_candles(symbol=symbol, outputsize="compact"))["candles"]
+    analysis = analyse(candles, min_score=float(PAPER_STATE["automation"].get("min_score", 75)),
+                       profit_target_pct=profit_target_pct, stop_loss_pct=stop_loss_pct)
+    reason = freshness_reason(candles) or reentry_reason(
+        PAPER_STATE, symbol, candles, analysis,
+        int(PAPER_STATE["automation"].get("stop_cooldown_sessions", 2)))
+    save_paper_state()
+    if reason:
+        raise HTTPException(status_code=409, detail=reason)
     quote = await market_quote(symbol)
+    quote_reason = quote_entry_reason(quote, analysis)
+    if quote_reason:
+        raise HTTPException(status_code=409, detail=quote_reason)
     price = float(quote["price"])
 
     cash = float(PAPER_STATE["cash"])
@@ -137,8 +175,11 @@ async def paper_buy(symbol: str, profit_target_pct: float = 4.0, stop_loss_pct: 
         "target": price * (1.0 + profit_target_pct / 100.0),
         "stop": price * (1.0 - stop_loss_pct / 100.0),
         "profit_target_pct": profit_target_pct,
-        "stop_loss_pct": stop_loss_pct
+        "stop_loss_pct": stop_loss_pct,
+        "entry_signal_date": signal_date(candles),
+        "entry_score": analysis.get("score"),
     }
+    PAPER_STATE["reentry_blocks"].pop(symbol, None)
     PAPER_STATE["cash"] = 0.0
     append_paper_event(
         f"PAPER BUY {symbol.upper()} qty {quantity:.4f} @ {price:.2f}"
@@ -149,6 +190,7 @@ async def paper_buy(symbol: str, profit_target_pct: float = 4.0, stop_loss_pct: 
 
 
 @app.post("/paper/sell")
+@serial_paper_mutation
 async def paper_sell():
     position = PAPER_STATE["position"]
 
@@ -162,6 +204,7 @@ async def paper_sell():
     current = float(quote["price"])
     value = position["quantity"] * current
 
+    record_exit(PAPER_STATE, position, current, "MANUAL SELL")
     PAPER_STATE["cash"] = value
     append_paper_event(
         f"PAPER SELL {position['symbol']} qty {position['quantity']:.4f} @ {current:.2f}"
@@ -173,6 +216,7 @@ async def paper_sell():
 
 
 @app.post("/paper/check")
+@serial_paper_mutation
 async def paper_check():
     position = PAPER_STATE["position"]
 
@@ -204,6 +248,7 @@ async def paper_check():
         )
 
     if reason is not None:
+        record_exit(PAPER_STATE, position, current, reason)
         value = position["quantity"] * current
         PAPER_STATE["cash"] = value
         append_paper_event(
@@ -259,6 +304,16 @@ async def market_candles(
                 return disk_data
             except (OSError, json.JSONDecodeError):
                 pass
+
+    # Broad history source; the small Alpha allowance remains a fallback.
+    if outputsize == "compact":
+        try:
+            result = await yahoo_history(symbol.upper())
+            cache_file.write_text(json.dumps(result))
+            MARKET_CACHE[cache_key] = {"time": datetime.utcnow(), "data": result}
+            return result
+        except (HTTPException, httpx.HTTPError, OSError, ValueError):
+            pass
 
     api_key = os.getenv("ALPHA_VANTAGE_API_KEY")
     if not api_key:
@@ -666,13 +721,13 @@ ALPHA_FAILED_RETRY_HOURS = 24
 async def trading212_us_stock_universe():
     instruments = await trading212_instruments()
 
-    return [
-        item.get("shortName")
+    return list(dict.fromkeys(
+        str(item.get("shortName")).strip().upper().replace(".", "-")
         for item in instruments
         if item.get("type") == "STOCK"
         and str(item.get("ticker", "")).endswith("_US_EQ")
         and item.get("shortName")
-    ]
+    ))
 
 
 CACHE_WARM_TASK = None
@@ -739,33 +794,28 @@ async def paper_automation_loop():
                         )
                         qualified = scan.get("qualified", [])
 
-                        if qualified:
-                            best = qualified[0]
+                        bought = False
+                        for best in qualified:
                             symbol = best["symbol"]
                             score = best["analysis"]["score"]
-
-                            await paper_buy(
-                                symbol=symbol,
-                                profit_target_pct=float(
-                                    automation.get(
-                                        "profit_target_pct", 4.0
-                                    )
-                                ),
-                                stop_loss_pct=float(
-                                    automation.get("stop_loss_pct", 2.0)
-                                ),
-                            )
+                            try:
+                                await paper_buy(
+                                    symbol=symbol,
+                                    profit_target_pct=float(automation.get("profit_target_pct", 4.0)),
+                                    stop_loss_pct=float(automation.get("stop_loss_pct", 2.0)))
+                            except HTTPException as exc:
+                                if exc.status_code != 409:
+                                    raise
+                                append_paper_event(f"Skipped {symbol}: {exc.detail}")
+                                continue
                             automation["last_action"] = (
-                                f"Bought {symbol} automatically "
-                                f"from score {score:.2f}"
-                            )
-                            append_paper_event(
-                                automation["last_action"]
-                            )
-                        else:
+                                f"Bought {symbol} automatically from score {score:.2f}")
+                            append_paper_event(automation["last_action"])
+                            bought = True
+                            break
+                        if not bought:
                             automation["last_action"] = (
-                                "Automated scan found no qualifying signal"
-                            )
+                                f"Scanned {scan.get('valid_count', 0)} stocks; no eligible fresh-quote signal")
 
                     save_paper_state()
 
@@ -863,90 +913,30 @@ def save_cache_warm_state(state):
         pass
 
 
-async def cache_warm_loop():
-    # Give the API time to finish starting before background work begins.
-    await asyncio.sleep(10)
+HISTORY_WARM_STATE_FILE = CACHE_DIR / "history_warm_state.json"
 
+def load_history_warm_state():
+    try:
+        return json.loads(HISTORY_WARM_STATE_FILE.read_text())
+    except (OSError, ValueError):
+        return {}
+
+def save_history_warm_state(state):
+    CACHE_DIR.mkdir(parents=True, exist_ok=True)
+    tmp = HISTORY_WARM_STATE_FILE.with_suffix(".tmp")
+    tmp.write_text(json.dumps(state))
+    tmp.replace(HISTORY_WARM_STATE_FILE)
+
+async def cache_warm_loop():
+    await asyncio.sleep(10)
     while True:
         try:
-            state = load_cache_warm_state()
-
-            if state["requests_today"] >= CACHE_WARM_DAILY_LIMIT:
-                await asyncio.sleep(CACHE_WARM_INTERVAL_SECONDS)
-                continue
-
             universe = await trading212_us_stock_universe()
-
-            if not universe:
-                await asyncio.sleep(CACHE_WARM_INTERVAL_SECONDS)
-                continue
-
-            start = int(state.get("cursor", 0)) % len(universe)
-            selected = None
-            selected_index = None
-
-            for offset in range(len(universe)):
-                index = (start + offset) % len(universe)
-                symbol = universe[index].upper()
-
-                cache_file = CACHE_DIR / f"{symbol}_compact.json"
-
-                cache_is_fresh = (
-                    cache_file.exists()
-                    and (
-                        datetime.now().timestamp()
-                        - cache_file.stat().st_mtime
-                    ) < CACHE_MINUTES * 60
-                )
-
-                if cache_is_fresh:
-                    continue
-
-                if alpha_failure_is_recent(symbol):
-                    continue
-
-                selected = symbol
-                selected_index = index
-                break
-
-            if selected is None:
-                await asyncio.sleep(CACHE_WARM_INTERVAL_SECONDS)
-                continue
-
-            state["cursor"] = (selected_index + 1) % len(universe)
-
-            # Count the request even when Alpha Vantage rejects the symbol,
-            # so the daily API allowance remains protected.
-            state["requests_today"] += 1
-            save_cache_warm_state(state)
-
-            try:
-                await market_candles(
-                    symbol=selected,
-                    outputsize="compact"
-                )
-
-                print(
-                    f"CACHE WARM: {selected} cached "
-                    f"({state['requests_today']}/{CACHE_WARM_DAILY_LIMIT})"
-                )
-
-            except HTTPException as exc:
-                detail = str(exc.detail)
-
-                if "no daily price data" in detail.lower():
-                    failed = load_alpha_failed_symbols()
-                    failed[selected] = datetime.utcnow().isoformat()
-                    save_alpha_failed_symbols(failed)
-
-                print(
-                    f"CACHE WARM: {selected} skipped - {detail}"
-                )
-
+            await warm_history_batch(universe, CACHE_DIR, load_history_warm_state(),
+                                     save_history_warm_state)
         except Exception as exc:
-            print(f"CACHE WARM ERROR: {exc}")
-
-        await asyncio.sleep(CACHE_WARM_INTERVAL_SECONDS)
+            print(f"HISTORY WARM ERROR: {type(exc).__name__}")
+        await asyncio.sleep(HISTORY_INTERVAL_SECONDS)
 
 
 @app.on_event("startup")
@@ -987,7 +977,11 @@ async def cache_warm_status():
         "daily_limit": CACHE_WARM_DAILY_LIMIT,
         "cursor": state.get("cursor", 0),
         "failed_symbols": len(failed),
-        "interval_seconds": CACHE_WARM_INTERVAL_SECONDS,
+        "interval_seconds": HISTORY_INTERVAL_SECONDS,
+        "history_provider": "yahoo_daily",
+        "history_daily_limit": HISTORY_DAILY_LIMIT,
+        "history_progress": load_history_warm_state(),
+        "universe_count": len(await trading212_us_stock_universe()),
     }
 
 
@@ -1081,6 +1075,15 @@ async def scanner_scan(symbols: str = "",
 
             analysis = analyse(candles_response["candles"], min_score=min_score, profit_target_pct=profit_target_pct, stop_loss_pct=stop_loss_pct)
 
+            candles = candles_response["candles"]
+            analysis["signal_date"] = signal_date(candles)
+            entry_reason = freshness_reason(candles) or reentry_reason(
+                PAPER_STATE, symbol, candles, analysis,
+                int(PAPER_STATE["automation"].get("stop_cooldown_sessions", 2)))
+            if entry_reason:
+                analysis["qualified"] = False
+                analysis.setdefault("blockers", []).append(entry_reason)
+                analysis["reason"] = entry_reason
             results.append({
                 "symbol": symbol,
                 "analysis": analysis
@@ -1114,6 +1117,31 @@ async def scanner_scan(symbols: str = "",
                 "error": exc.detail
             })
 
+    semaphore = asyncio.Semaphore(6)
+    async def validate_candidate(item):
+        analysis = item.get("analysis", {})
+        if not analysis.get("qualified"):
+            return
+        async with semaphore:
+            try:
+                quote = await market_quote(item["symbol"])
+                reason = quote_entry_reason(quote, analysis)
+                analysis["quote_source"] = quote.get("source", "unknown")
+                analysis["quote_age_seconds"] = quote.get("quote_age_seconds")
+                if reason:
+                    analysis["qualified"] = False
+                    analysis.setdefault("blockers", []).append(reason)
+                    analysis["reason"] = reason
+                else:
+                    analysis["signal_price"] = analysis.get("price")
+                    analysis["price"] = float(quote["price"])
+            except (HTTPException, httpx.HTTPError, ValueError, TypeError):
+                analysis["qualified"] = False
+                analysis["reason"] = "Live quote unavailable; entry skipped"
+                analysis.setdefault("blockers", []).append(analysis["reason"])
+    await asyncio.gather(*(validate_candidate(item) for item in results))
+
+    save_paper_state()
     results.sort(
         key=lambda x: x.get("analysis", {}).get("score", -1),
         reverse=True
@@ -1130,6 +1158,8 @@ async def scanner_scan(symbols: str = "",
     ]
 
     return {
+        "universe_count": len(await trading212_us_stock_universe()) if not symbols.strip() else len(symbol_list),
+        "cached_count": len(list(CACHE_DIR.glob("*_compact.json"))),
         "count": len(results),
         "valid_count": len(results) - len(unavailable),
         "qualified_count": len(qualified),
