@@ -11,6 +11,7 @@ import androidx.compose.foundation.lazy.items
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.unit.dp
 import kotlinx.coroutines.launch
@@ -35,6 +36,26 @@ private val backendClient = OkHttpClient.Builder()
     }
     .build()
 
+
+private val TraderDarkColors = darkColorScheme(
+    primary = Color(0xFFB5A1F4), onPrimary = Color(0xFF261F3C),
+    background = Color(0xFF0D1117), onBackground = Color(0xFFE6EDF3),
+    surface = Color(0xFF161B22), onSurface = Color(0xFFE6EDF3),
+    surfaceVariant = Color(0xFF222A35), onSurfaceVariant = Color(0xFFBCC6D3),
+    outline = Color(0xFF667487), error = Color(0xFFFF8585)
+)
+
+private fun displayBackendTime(raw: String): String = runCatching {
+    java.time.LocalDateTime.parse(raw).atOffset(java.time.ZoneOffset.UTC)
+        .atZoneSameInstant(java.time.ZoneId.systemDefault())
+        .format(java.time.format.DateTimeFormatter.ofPattern("dd MMM HH:mm:ss"))
+}.getOrDefault("Not yet recorded")
+
+private fun quoteAgeLabel(timestamp: Long?): String {
+    if (timestamp == null) return "Quote age unavailable"
+    val age = (System.currentTimeMillis() / 1000 - timestamp).coerceAtLeast(0)
+    return if (age < 60) "${age}s old" else "${age / 60}m ${age % 60}s old"
+}
 
 data class SimPosition(
     val ticker: String,
@@ -373,6 +394,8 @@ private suspend fun backendCurrentPrice(symbol: String): Double =
 class MainActivity : ComponentActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
+        window.statusBarColor = android.graphics.Color.rgb(13, 17, 23)
+        window.navigationBarColor = android.graphics.Color.rgb(13, 17, 23)
         setContent { App() }
     }
 }
@@ -407,6 +430,15 @@ fun App() {
     var automationLastScan by remember { mutableStateOf("Not yet scanned") }
     var automationNextScan by remember { mutableStateOf("Waiting") }
     var automationLastUpdated by remember { mutableStateOf("Not yet updated") }
+    var backgroundScanStatus by remember { mutableStateOf("Loading...") }
+    var scanCoverage by remember { mutableStateOf("Waiting for first background scan") }
+    var lastPositionCheck by remember { mutableStateOf("Not yet recorded") }
+    var positionCheckError by remember { mutableStateOf("") }
+    var checkInterval by remember { mutableStateOf(60) }
+    var scanInterval by remember { mutableStateOf(900) }
+    var positionQuoteTimestamp by remember { mutableStateOf<Long?>(null) }
+    var shortlistRefreshed by remember { mutableStateOf("Not yet recorded") }
+    var shortlist by remember { mutableStateOf(listOf<JSONObject>()) }
 
     fun addLog(s: String) { log = (log + s).takeLast(100) }
 
@@ -466,7 +498,7 @@ fun App() {
                     val monitoringStatus = backendPosition.optString("monitoring_status", "")
 
                     status = when (quoteSource) {
-                        "live" -> "LIVE • ${p.ticker} @ ${"%.2f".format(current)} • automatic exits enabled"
+                        "live" -> "FRESH QUOTE • ${p.ticker} @ ${"%.2f".format(current)} • automatic exits enabled"
                         "cached" -> {
                             val dateText = if (latestTradingDay.isNotBlank()) " • close $latestTradingDay" else ""
                             "CACHED • ${p.ticker} @ ${"%.2f".format(current)}$dateText • automatic exits paused"
@@ -503,31 +535,27 @@ fun App() {
                     automationEnabled = automation.optBoolean("enabled", false)
                     automationLastAction =
                         automation.optString("last_action", "No action recorded")
-                    automationLastScan =
-                        automation.optString("last_scan_at", "")
-                            .takeIf { it.isNotBlank() }
-                            ?.replace("T", " ")
-                            ?.take(19)
-                            ?: "Not yet scanned"
-
-                    val scanSeconds =
-                        automation.optInt("scan_interval_seconds", 900)
+                    automationLastScan = displayBackendTime(automation.optString("last_scan_at", ""))
+                    scanInterval = automation.optInt("scan_interval_seconds", 900)
+                    checkInterval = automation.optInt("check_interval_seconds", 60)
+                    backgroundScanStatus = automation.optString("scan_status", "Background scan status unavailable")
+                    scanCoverage = if (automation.has("scan_valid_count"))
+                        "${automation.optInt("scan_valid_count")} analysed / ${automation.optInt("scan_universe_count")} US stocks"
+                    else "Waiting for first background scan"
+                    lastPositionCheck = displayBackendTime(automation.optString("last_position_check_at", ""))
+                    positionCheckError = if (automation.isNull("last_position_check_error")) "" else automation.optString("last_position_check_error", "")
+                    shortlistRefreshed = displayBackendTime(automation.optString("shortlist_refreshed_at", ""))
+                    val candidateArray = automation.optJSONArray("shortlist")
+                    shortlist = (0 until (candidateArray?.length() ?: 0)).mapNotNull { candidateArray?.optJSONObject(it) }
                     val backendPosition = state.optJSONObject("position")
-
-                    automationNextScan =
-                        if (backendPosition != null) {
-                            "After the open position closes"
-                        } else {
-                            val raw = automation.optString("last_scan_at", "")
-                            runCatching {
-                                java.time.LocalDateTime.parse(raw)
-                                    .plusSeconds(scanSeconds.toLong())
-                                    .format(
-                                        java.time.format.DateTimeFormatter
-                                            .ofPattern("HH:mm:ss 'UTC'")
-                                    )
-                            }.getOrDefault("Due shortly")
-                        }
+                    positionQuoteTimestamp = if (backendPosition != null && !backendPosition.isNull("quote_timestamp"))
+                        backendPosition.optLong("quote_timestamp") else null
+                    automationNextScan = if (!automationEnabled) "Paused" else runCatching {
+                        java.time.LocalDateTime.parse(automation.optString("last_scan_at", ""))
+                            .plusSeconds(scanInterval.toLong()).atOffset(java.time.ZoneOffset.UTC)
+                            .atZoneSameInstant(java.time.ZoneId.systemDefault())
+                            .format(java.time.format.DateTimeFormatter.ofPattern("HH:mm:ss"))
+                    }.getOrDefault("Due shortly")
 
                     if (firstLoad) {
                         profitTarget = automation
@@ -602,7 +630,7 @@ fun App() {
     }
 
 
-    MaterialTheme {
+    MaterialTheme(colorScheme = TraderDarkColors) {
         Scaffold(
             topBar = {
                 TopAppBar(title = { Text("212 Trend Trader") })
@@ -642,14 +670,19 @@ fun App() {
                                     style = MaterialTheme.typography.titleMedium,
                                     color =
                                         if (automationLastUpdated == "Connection failed") MaterialTheme.colorScheme.error else if (automationEnabled)
-                                            androidx.compose.ui.graphics.Color(0xFF2E7D32)
+                                            Color(0xFF69DB8C)
                                         else
-                                            androidx.compose.ui.graphics.Color(0xFFC62828)
+                                            Color(0xFFFF8585)
                                 )
                                 Text("Last action: $automationLastAction")
                                 Text("Last scan: $automationLastScan")
-                                Text("Next scan: $automationNextScan")
-                                Text("Position check: every 60 seconds")
+                                Text("Next background scan: $automationNextScan")
+                                Text("Scanning: every ${scanInterval / 60} minutes, including while holding")
+                                Text("Position check: every $checkInterval seconds")
+                                Text("Last position check: $lastPositionCheck")
+                                if (positionCheckError.isNotBlank()) Text("Monitor error: $positionCheckError", color = MaterialTheme.colorScheme.error)
+                                Text("Background scan: $backgroundScanStatus")
+                                Text(scanCoverage)
                                 Text("Dashboard updated: $automationLastUpdated")
 
                                 val open = positions.firstOrNull()
@@ -662,12 +695,12 @@ fun App() {
                                         else 0.0
                                     val gainColor =
                                         if (gain >= 0.0)
-                                            androidx.compose.ui.graphics.Color(0xFF2E7D32)
+                                            Color(0xFF69DB8C)
                                         else
-                                            androidx.compose.ui.graphics.Color(0xFFC62828)
+                                            Color(0xFFFF8585)
 
                                     Text(
-                                        "Live paper price: ${"%.2f".format(open.price)}"
+                                        "Paper price: ${"%.2f".format(open.price)} • ${quoteAgeLabel(positionQuoteTimestamp)}"
                                     )
                                     Text(
                                         "Paper P/L: £${"%+.2f".format(gain)} " +
@@ -791,9 +824,9 @@ fun App() {
 
                             val summaryGlColor =
                                 if (summary.unrealizedProfitLoss >= 0.0)
-                                    androidx.compose.ui.graphics.Color(0xFF2E7D32)
+                                    Color(0xFF69DB8C)
                                 else
-                                    androidx.compose.ui.graphics.Color(0xFFC62828)
+                                    Color(0xFFFF8585)
 
                             Text(
                                 "Positions: ${livePositions.size}",
@@ -867,9 +900,9 @@ fun App() {
 
                                 val gainLossColor =
                                     if (gainLoss >= 0.0)
-                                        androidx.compose.ui.graphics.Color(0xFF2E7D32)
+                                        Color(0xFF69DB8C)
                                     else
-                                        androidx.compose.ui.graphics.Color(0xFFC62828)
+                                        Color(0xFFFF8585)
 
                                 Text(
                                     "Position value: ${p.currency} ${"%.2f".format(p.positionValue)}"
@@ -1001,9 +1034,9 @@ fun App() {
                                     "(${"%+.2f".format(paperGainPct)}%)",
                                 color =
                                     if (paperGain >= 0.0)
-                                        androidx.compose.ui.graphics.Color(0xFF2E7D32)
+                                        Color(0xFF69DB8C)
                                     else
-                                        androidx.compose.ui.graphics.Color(0xFFC62828)
+                                        Color(0xFFFF8585)
                             )
                             Button(onClick = {
                                 scope.launch {
@@ -1020,6 +1053,33 @@ fun App() {
                                     }
                                 }
                             }) { Text("PAPER SELL") }
+                        }
+                    }
+                }
+
+                if (mode == "PAPER") {
+                    item {
+                        Text("BACKGROUND SHORTLIST", style = MaterialTheme.typography.titleLarge)
+                        Text("${shortlist.size} candidates • refreshed $shortlistRefreshed")
+                        Text("Candidates are checked again before buying.", style = MaterialTheme.typography.bodySmall)
+                        if (automationLastUpdated == "Connection failed") Text("Connection failed — shortlist and prices may be stale", color = MaterialTheme.colorScheme.error)
+                        if (shortlist.isEmpty()) Text("No candidates yet")
+                    }
+                    items(shortlist) { candidate ->
+                        Card(Modifier.fillMaxWidth()) {
+                            Column(Modifier.padding(12.dp), verticalArrangement = Arrangement.spacedBy(4.dp)) {
+                                val score = candidate.optJSONObject("analysis")?.optDouble("score", 0.0) ?: 0.0
+                                val timestamp = if (candidate.isNull("quote_timestamp")) null else candidate.optLong("quote_timestamp")
+                                val price = if (candidate.has("price") && !candidate.isNull("price")) "%.3f".format(candidate.optDouble("price")) else "unavailable"
+                                Text("${candidate.optString("symbol")} • score ${"%.1f".format(score)}", style = MaterialTheme.typography.titleMedium)
+                                Text("Price $price • ${quoteAgeLabel(timestamp)}")
+                                val fresh = timestamp?.let { System.currentTimeMillis() / 1000 - it in 0..120 } ?: false
+                                val verified = automationLastUpdated != "Connection failed" && fresh
+                                val eligible = candidate.optBoolean("entry_eligible", false)
+                                Text(if (!verified) "Fresh quote required" else if (eligible) "Eligible at last check" else "Entry blocked",
+                                    color = if (verified && eligible) Color(0xFF69DB8C) else MaterialTheme.colorScheme.onSurfaceVariant)
+                                Text(candidate.optString("entry_reason", "Waiting for quote"), style = MaterialTheme.typography.bodySmall)
+                            }
                         }
                     }
                 }
