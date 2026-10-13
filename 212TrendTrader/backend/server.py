@@ -32,6 +32,11 @@ def default_paper_state():
             "check_interval_seconds": 60,
             "stop_cooldown_sessions": 2,
             "last_scan_at": None,
+            "last_position_check_at": None,
+            "last_position_check_error": None,
+            "scan_status": "Waiting for background scan",
+            "shortlist": [],
+            "shortlist_refreshed_at": None,
             "last_action": "Waiting for first automated scan",
         },
     }
@@ -64,6 +69,8 @@ def save_paper_state():
 
 PAPER_STATE = load_paper_state()
 PAPER_AUTOMATION_TASK = None
+MARKET_SCAN_TASK = None
+LIVE_QUOTE_MAX_AGE_SECONDS = 120
 PAPER_MUTATION_LOCK = asyncio.Lock()
 
 
@@ -223,7 +230,20 @@ async def paper_check():
     if position is None:
         return PAPER_STATE
 
-    quote = await market_quote(position["symbol"])
+    checked_at = datetime.utcnow().isoformat()
+    try:
+        quote = await market_quote(position["symbol"])
+    except Exception as exc:
+        PAPER_STATE["automation"]["last_position_check_error"] = type(exc).__name__
+        position["monitoring_status"] = "QUOTE UNAVAILABLE - automatic exits paused"
+        position["last_check_attempt_at"] = checked_at
+        save_paper_state()
+        raise
+    PAPER_STATE["automation"]["last_position_check_at"] = checked_at
+    PAPER_STATE["automation"]["last_position_check_error"] = None
+    position["last_checked_at"] = checked_at
+    position["quote_timestamp"] = quote.get("quote_timestamp")
+    position["quote_age_seconds"] = quote.get("quote_age_seconds")
     current = float(quote["price"])
     quote_source = quote.get("source", "unknown")
 
@@ -244,7 +264,7 @@ async def paper_check():
             reason = "STOP HIT"
     else:
         position["monitoring_status"] = (
-            "CACHED PRICE - automatic exits paused"
+            "STALE OR CACHED PRICE - automatic exits paused"
         )
 
     if reason is not None:
@@ -461,7 +481,7 @@ async def market_quote(symbol: str):
                             ).date().isoformat(),
                             "quote_timestamp": quote_time,
                             "quote_age_seconds": max(0, int(age_seconds)),
-                            "source": "live" if age_seconds <= 1200 else "delayed",
+                            "source": "live" if age_seconds <= LIVE_QUOTE_MAX_AGE_SECONDS else "delayed",
                             "provider": "yahoo_intraday",
                         }
     except (httpx.HTTPError, ValueError, TypeError, KeyError, IndexError):
@@ -753,71 +773,35 @@ async def paper_automation_loop():
                 automation["last_action"] = "Open position checked"
                 save_paper_state()
             else:
-                now = datetime.utcnow()
-                last_scan_at = automation.get("last_scan_at")
-                scan_due = True
-
-                if last_scan_at:
+                # Scanning runs independently, including while a position is open.
+                for candidate in automation.get("shortlist", []):
+                    if not automation.get("enabled") or PAPER_STATE["position"] is not None:
+                        break
+                    if not candidate.get("entry_eligible"):
+                        continue
+                    refreshed_at = candidate.get("refreshed_at")
                     try:
-                        last_scan = datetime.fromisoformat(last_scan_at)
-                        scan_due = (
-                            now - last_scan
-                        ).total_seconds() >= int(
-                            automation.get("scan_interval_seconds", 900)
-                        )
+                        age = (datetime.utcnow() - datetime.fromisoformat(refreshed_at)).total_seconds()
                     except (TypeError, ValueError):
-                        scan_due = True
-
-                if scan_due:
-                    cached_symbols = sorted({
-                        cache_file.name.replace("_compact.json", "")
-                        for cache_file in CACHE_DIR.glob("*_compact.json")
-                    })
-                    automation["last_scan_at"] = now.isoformat()
-
-                    if not cached_symbols:
-                        automation["last_action"] = (
-                            "Automated scan waiting for cached market data"
-                        )
-                    else:
-                        scan = await scanner_scan(
-                            symbols=",".join(cached_symbols),
-                            min_score=float(
-                                automation.get("min_score", 75.0)
-                            ),
-                            profit_target_pct=float(
-                                automation.get("profit_target_pct", 4.0)
-                            ),
-                            stop_loss_pct=float(
-                                automation.get("stop_loss_pct", 2.0)
-                            ),
-                        )
-                        qualified = scan.get("qualified", [])
-
-                        bought = False
-                        for best in qualified:
-                            symbol = best["symbol"]
-                            score = best["analysis"]["score"]
-                            try:
-                                await paper_buy(
-                                    symbol=symbol,
-                                    profit_target_pct=float(automation.get("profit_target_pct", 4.0)),
-                                    stop_loss_pct=float(automation.get("stop_loss_pct", 2.0)))
-                            except HTTPException as exc:
-                                if exc.status_code != 409:
-                                    raise
-                                append_paper_event(f"Skipped {symbol}: {exc.detail}")
-                                continue
-                            automation["last_action"] = (
-                                f"Bought {symbol} automatically from score {score:.2f}")
-                            append_paper_event(automation["last_action"])
-                            bought = True
-                            break
-                        if not bought:
-                            automation["last_action"] = (
-                                f"Scanned {scan.get('valid_count', 0)} stocks; no eligible fresh-quote signal")
-
+                        continue
+                    if not 0 <= age <= LIVE_QUOTE_MAX_AGE_SECONDS:
+                        continue
+                    if candidate.get("settings") != scan_settings():
+                        continue
+                    try:
+                        # Recheck history, cooldown and price immediately before entry.
+                        await paper_buy(symbol=candidate["symbol"],
+                            profit_target_pct=float(automation.get("profit_target_pct", 4.0)),
+                            stop_loss_pct=float(automation.get("stop_loss_pct", 2.0)))
+                    except HTTPException as exc:
+                        if exc.status_code != 409:
+                            raise
+                        append_paper_event(f"Skipped {candidate['symbol']}: {exc.detail}")
+                        continue
+                    automation["last_action"] = f"Bought {candidate['symbol']} automatically from shortlist"
+                    append_paper_event(automation["last_action"])
                     save_paper_state()
+                    break
 
         except asyncio.CancelledError:
             raise
@@ -830,6 +814,73 @@ async def paper_automation_loop():
             print(f"PAPER AUTOMATION ERROR: {exc}")
 
         await asyncio.sleep(sleep_seconds)
+
+
+def scan_settings():
+    automation = PAPER_STATE["automation"]
+    return {key: float(automation.get(key, default)) for key, default in
+            (("min_score", 75.0), ("profit_target_pct", 4.0), ("stop_loss_pct", 2.0))}
+
+
+async def refresh_market_shortlist():
+    automation = PAPER_STATE["automation"]
+    now = datetime.utcnow()
+    settings = scan_settings()
+    try:
+        last_scan = datetime.fromisoformat(automation.get("last_scan_at") or "")
+        due = (now - last_scan).total_seconds() >= int(automation.get("scan_interval_seconds", 900))
+    except (ValueError, TypeError):
+        due = True
+    if due or automation.get("shortlist_settings") != settings:
+        automation["scan_status"] = "Background scan running"
+        # Use cached history, with the existing limit of five missing histories.
+        scan = await scanner_scan(validate_live=False, **settings)
+        if settings != scan_settings():
+            automation["scan_status"] = "Settings changed; scan will retry"
+            return
+        ranked = scan.get("qualified", [])[:20]
+        automation["shortlist"] = [{"symbol": item["symbol"],
+            "analysis": item["analysis"], "settings": settings,
+            "entry_eligible": False} for item in ranked]
+        automation["last_scan_at"] = datetime.utcnow().isoformat()
+        automation["shortlist_settings"] = settings
+        automation["scan_valid_count"] = scan.get("valid_count", 0)
+        automation["scan_universe_count"] = scan.get("universe_count", 0)
+        automation["scan_status"] = "Background scan complete"
+    shortlist = automation.get("shortlist", [])
+    semaphore = asyncio.Semaphore(3)
+    async def refresh(candidate):
+        candidate["entry_eligible"] = False
+        async with semaphore:
+            try:
+                quote = await market_quote(candidate["symbol"])
+                candidate.update(price=quote["price"], quote_timestamp=quote.get("quote_timestamp"),
+                    quote_age_seconds=quote.get("quote_age_seconds"), quote_source=quote.get("source"),
+                    refreshed_at=datetime.utcnow().isoformat())
+                reason = quote_entry_reason(quote, candidate["analysis"])
+                candidate["entry_eligible"] = reason is None
+                candidate["entry_reason"] = reason or "Fresh quote supports daily signal"
+            except (HTTPException, httpx.HTTPError, ValueError, TypeError, KeyError):
+                candidate["entry_reason"] = "Quote unavailable; entry skipped"
+    await asyncio.gather(*(refresh(candidate) for candidate in shortlist))
+    automation["shortlist_refreshed_at"] = datetime.utcnow().isoformat()
+    save_paper_state()
+
+
+async def background_market_scan_loop():
+    await asyncio.sleep(12)
+    while True:
+        try:
+            if PAPER_STATE["automation"].get("enabled"):
+                await refresh_market_shortlist()
+        except asyncio.CancelledError:
+            raise
+        except Exception as exc:
+            PAPER_STATE["automation"]["scan_status"] = f"Background scan error: {type(exc).__name__}"
+            for candidate in PAPER_STATE["automation"].get("shortlist", []):
+                candidate["entry_eligible"] = False
+            save_paper_state()
+        await asyncio.sleep(60)
 
 
 def load_alpha_failed_symbols():
@@ -941,7 +992,7 @@ async def cache_warm_loop():
 
 @app.on_event("startup")
 async def start_background_tasks():
-    global CACHE_WARM_TASK, PAPER_AUTOMATION_TASK
+    global CACHE_WARM_TASK, PAPER_AUTOMATION_TASK, MARKET_SCAN_TASK
 
     if CACHE_WARM_TASK is None or CACHE_WARM_TASK.done():
         CACHE_WARM_TASK = asyncio.create_task(cache_warm_loop())
@@ -952,16 +1003,21 @@ async def start_background_tasks():
         )
 
 
+    if MARKET_SCAN_TASK is None or MARKET_SCAN_TASK.done():
+        MARKET_SCAN_TASK = asyncio.create_task(background_market_scan_loop())
+
+
 @app.on_event("shutdown")
 async def stop_background_tasks():
-    global CACHE_WARM_TASK, PAPER_AUTOMATION_TASK
+    global CACHE_WARM_TASK, PAPER_AUTOMATION_TASK, MARKET_SCAN_TASK
 
-    for task in (CACHE_WARM_TASK, PAPER_AUTOMATION_TASK):
+    for task in (CACHE_WARM_TASK, PAPER_AUTOMATION_TASK, MARKET_SCAN_TASK):
         if task is not None:
             task.cancel()
 
     CACHE_WARM_TASK = None
     PAPER_AUTOMATION_TASK = None
+    MARKET_SCAN_TASK = None
 
 
 @app.get("/cache/warm-status")
@@ -1019,7 +1075,8 @@ async def strategy_analyse(symbol: str):
 async def scanner_scan(symbols: str = "",
                        min_score: float = 75.0,
                        profit_target_pct: float = 4.0,
-                       stop_loss_pct: float = 2.0):
+                       stop_loss_pct: float = 2.0,
+                       validate_live: bool = True):
     results = []
     max_uncached_fetches = 5
     uncached_fetches = 0
@@ -1052,6 +1109,7 @@ async def scanner_scan(symbols: str = "",
         symbol_list = cached + uncached[:max_uncached_fetches]
 
     for symbol in symbol_list:
+        await asyncio.sleep(0)  # Let position monitoring run during a broad scan.
         try:
             cache_file = CACHE_DIR / f"{symbol.upper()}_compact.json"
             cache_is_fresh = (
@@ -1139,7 +1197,8 @@ async def scanner_scan(symbols: str = "",
                 analysis["qualified"] = False
                 analysis["reason"] = "Live quote unavailable; entry skipped"
                 analysis.setdefault("blockers", []).append(analysis["reason"])
-    await asyncio.gather(*(validate_candidate(item) for item in results))
+    if validate_live:
+        await asyncio.gather(*(validate_candidate(item) for item in results))
 
     save_paper_state()
     results.sort(
