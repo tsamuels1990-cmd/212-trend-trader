@@ -50,6 +50,7 @@ class PaperIntegrationTest(unittest.IsolatedAsyncioTestCase):
         self.tmp = tempfile.TemporaryDirectory()
         server.PAPER_STATE_FILE = Path(self.tmp.name)/'state.json'
         server.PAPER_STATE = server.default_paper_state()
+        server.PAPER_STATE['cash'] = 0.0
         server.PAPER_MUTATION_LOCK = asyncio.Lock()
         server.market_quote = AsyncMock(return_value={'price':98,'source':'live'})
         today = datetime.now(timezone.utc).date()

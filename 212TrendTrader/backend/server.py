@@ -7,6 +7,8 @@ import json
 from pathlib import Path
 from datetime import datetime, timedelta
 from functools import wraps
+from datetime import timezone
+from paper_distributions import (ENTRY_BLOCKS, quote_actions, distribution_review_reason, settle_receivables)
 from entry_rules import freshness_reason, reentry_reason, record_exit, signal_date
 import httpx
 from broad_market import yahoo_history, quote_entry_reason, warm_history_batch, HISTORY_DAILY_LIMIT, HISTORY_INTERVAL_SECONDS
@@ -19,6 +21,9 @@ PAPER_STATE_FILE = Path(__file__).resolve().parent / "paper_state.json"
 def default_paper_state():
     return {
         "cash": 1000.0,
+        "currency": "USD",
+        "accounting": "gross_no_tax_or_fx",
+        "distribution_ledger": [],
         "position": None,
         "reentry_blocks": {},
         "trades": [],
@@ -47,6 +52,9 @@ def load_paper_state():
             data = json.loads(PAPER_STATE_FILE.read_text())
             if isinstance(data, dict) and "cash" in data and "position" in data:
                 defaults = default_paper_state()
+                data.setdefault("currency", "USD")
+                data.setdefault("accounting", "gross_no_tax_or_fx")
+                data.setdefault("distribution_ledger", [])
                 data.setdefault("events", [])
                 data.setdefault("reentry_blocks", {})
                 data.setdefault("trades", [])
@@ -91,6 +99,7 @@ def append_paper_event(message):
 async def paper_automation_status():
     return {
         "automation": PAPER_STATE["automation"],
+        "currency": "USD",
         "cash": PAPER_STATE["cash"],
         "position": PAPER_STATE["position"],
     }
@@ -152,6 +161,8 @@ async def paper_buy(symbol: str, profit_target_pct: float = 4.0, stop_loss_pct: 
         raise HTTPException(status_code=400, detail="A paper position is already open")
 
     symbol = symbol.strip().upper()
+    if symbol in ENTRY_BLOCKS:
+        raise HTTPException(status_code=409, detail=ENTRY_BLOCKS[symbol])
     if profit_target_pct <= 0 or stop_loss_pct <= 0:
         raise HTTPException(status_code=400, detail="Target and stop must be positive")
     candles = (await market_candles(symbol=symbol, outputsize="compact"))["candles"]
@@ -177,6 +188,9 @@ async def paper_buy(symbol: str, profit_target_pct: float = 4.0, stop_loss_pct: 
 
     PAPER_STATE["position"] = {
         "symbol": symbol.upper(),
+        "opened_at": datetime.now(timezone.utc).isoformat(),
+        "currency": "USD",
+        "distribution_per_share": 0.0,
         "entry": price,
         "quantity": quantity,
         "target": price * (1.0 + profit_target_pct / 100.0),
@@ -208,11 +222,14 @@ async def paper_sell():
         )
 
     quote = await market_quote(position["symbol"])
+    review = distribution_review_reason(PAPER_STATE, position, quote)
+    if review:
+        raise HTTPException(status_code=409, detail=review)
     current = float(quote["price"])
     value = position["quantity"] * current
 
     record_exit(PAPER_STATE, position, current, "MANUAL SELL")
-    PAPER_STATE["cash"] = value
+    PAPER_STATE["cash"] = float(PAPER_STATE["cash"]) + value
     append_paper_event(
         f"PAPER SELL {position['symbol']} qty {position['quantity']:.4f} @ {current:.2f}"
     )
@@ -255,7 +272,11 @@ async def paper_check():
 
     # Cached daily closes are useful for display, but must never trigger
     # an automatic target/stop exit because they may be stale.
-    if quote_source == "live":
+    review = distribution_review_reason(PAPER_STATE, position, quote)
+    position["corporate_action_review"] = review
+    if review:
+        position["monitoring_status"] = review + " - automatic exits paused"
+    elif quote_source == "live":
         position["monitoring_status"] = "LIVE - automatic exits enabled"
 
         if current >= position["target"]:
@@ -270,7 +291,7 @@ async def paper_check():
     if reason is not None:
         record_exit(PAPER_STATE, position, current, reason)
         value = position["quantity"] * current
-        PAPER_STATE["cash"] = value
+        PAPER_STATE["cash"] = float(PAPER_STATE["cash"]) + value
         append_paper_event(
             f"AUTO PAPER SELL {position['symbol']} @ {current:.2f} {reason}"
         )
@@ -436,7 +457,7 @@ async def market_quote(symbol: str):
         ) as client:
             response = await client.get(
                 f"https://query1.finance.yahoo.com/v8/finance/chart/{symbol}",
-                params={"interval": "1m", "range": "1d"},
+                params={"interval": "1d", "range": "1y", "events": "div,splits"},
             )
 
         if response.status_code == 200:
@@ -467,7 +488,7 @@ async def market_quote(symbol: str):
                 if price is not None and quote_time is not None:
                     price = float(price)
                     quote_time = int(quote_time)
-                    age_seconds = datetime.utcnow().timestamp() - quote_time
+                    age_seconds = datetime.now(timezone.utc).timestamp() - quote_time
 
                     # Keep a valid timestamped close for display after it ages
                     # out of live trading eligibility, instead of reverting to
@@ -483,6 +504,7 @@ async def market_quote(symbol: str):
                             "quote_age_seconds": max(0, int(age_seconds)),
                             "source": "live" if age_seconds <= LIVE_QUOTE_MAX_AGE_SECONDS else "delayed",
                             "provider": "yahoo_intraday",
+                            **quote_actions(chart),
                         }
     except (httpx.HTTPError, ValueError, TypeError, KeyError, IndexError):
         pass
@@ -758,6 +780,8 @@ async def paper_automation_loop():
 
     while True:
         automation = PAPER_STATE["automation"]
+        if settle_receivables(PAPER_STATE):
+            save_paper_state()
         sleep_seconds = max(
             30,
             int(automation.get("check_interval_seconds", 60)),
@@ -1111,6 +1135,8 @@ async def scanner_scan(symbols: str = "",
     for symbol in symbol_list:
         await asyncio.sleep(0)  # Let position monitoring run during a broad scan.
         try:
+            if symbol in ENTRY_BLOCKS:
+                raise HTTPException(status_code=409, detail=ENTRY_BLOCKS[symbol])
             cache_file = CACHE_DIR / f"{symbol.upper()}_compact.json"
             cache_is_fresh = (
                 cache_file.exists()
@@ -1133,6 +1159,8 @@ async def scanner_scan(symbols: str = "",
 
             analysis = analyse(candles_response["candles"], min_score=min_score, profit_target_pct=profit_target_pct, stop_loss_pct=stop_loss_pct)
 
+            if analysis.get("invalid_data"):
+                raise ValueError(analysis["reason"])
             candles = candles_response["candles"]
             analysis["signal_date"] = signal_date(candles)
             entry_reason = freshness_reason(candles) or reentry_reason(
@@ -1174,6 +1202,9 @@ async def scanner_scan(symbols: str = "",
                 "symbol": symbol,
                 "error": exc.detail
             })
+
+        except (ValueError, TypeError, KeyError, ArithmeticError) as exc:
+            results.append({"symbol": symbol, "error": f"Invalid historical data: {type(exc).__name__}: {exc}"})
 
     semaphore = asyncio.Semaphore(6)
     async def validate_candidate(item):
