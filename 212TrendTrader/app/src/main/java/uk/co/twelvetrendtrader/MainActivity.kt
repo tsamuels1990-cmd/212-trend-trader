@@ -455,8 +455,7 @@ fun App() {
                 val entry = backendPosition.optDouble("entry", 0.0)
                 val quantity = backendPosition.optDouble("quantity", 0.0)
                 val target = backendPosition.optDouble("target", 0.0)
-                val stop = backendPosition.optDouble("stop", 0.0),
-                                distributionPerShare = backendPosition.optDouble("distribution_per_share", 0.0)
+                val stop = backendPosition.optDouble("stop", 0.0)
 
                 positions = listOf(
                     SimPosition(
@@ -586,7 +585,8 @@ fun App() {
                                     "current_price", entry
                                 ),
                                 target = backendPosition.optDouble("target", 0.0),
-                                stop = backendPosition.optDouble("stop", 0.0)
+                                stop = backendPosition.optDouble("stop", 0.0),
+                                distributionPerShare = backendPosition.optDouble("distribution_per_share", 0.0)
                             )
                         )
                     } else {
