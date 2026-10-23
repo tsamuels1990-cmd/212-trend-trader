@@ -62,6 +62,8 @@ async def yahoo_history(symbol):
             "provider": "yahoo_daily", "fetched_at": datetime.now(timezone.utc).isoformat()}
 
 def quote_entry_reason(quote, analysis):
+    if quote.get("currency", "USD") != "USD":
+        return "Only USD paper entries are supported"
     if quote.get("source") != "live":
         age = quote.get("quote_age_seconds")
         suffix = f" (quote age: {int(age)//60} minutes)" if isinstance(age, (int,float)) else ""

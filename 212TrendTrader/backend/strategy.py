@@ -66,8 +66,16 @@ def analyse(candles, min_score: float = 75.0,
     if len(candles) < 51:
         return {"qualified": False, "score": 0, "reason": "At least 51 candles required"}
 
-    closes = [float(c["close"]) for c in candles]
-    volumes = [float(c.get("volume", 0.0)) for c in candles]
+    try:
+        closes = [float(c["close"]) for c in candles]
+        volumes = [float(c.get("volume", 0.0)) for c in candles]
+        prices = [float(c[key]) for c in candles for key in ("open", "high", "low", "close")]
+        if (any(not math.isfinite(v) or v <= 0 for v in prices)
+                or any(not math.isfinite(v) or v < 0 for v in volumes)):
+            raise ValueError("OHLC prices must be finite and positive; volume non-negative")
+    except (KeyError, TypeError, ValueError, OverflowError) as exc:
+        return {"qualified": False, "score": 0, "invalid_data": True,
+                "reason": f"Invalid historical prices: {exc}"}
     price = closes[-1]
     sma20_value = sma(closes, 20)
     sma50_value = sma(closes, 50)

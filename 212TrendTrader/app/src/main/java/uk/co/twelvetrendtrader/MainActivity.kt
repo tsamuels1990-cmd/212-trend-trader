@@ -63,7 +63,8 @@ data class SimPosition(
     val quantity: Double,
     var price: Double,
     val target: Double,
-    val stop: Double
+    val stop: Double,
+    val distributionPerShare: Double = 0.0
 )
 
 
@@ -454,7 +455,8 @@ fun App() {
                 val entry = backendPosition.optDouble("entry", 0.0)
                 val quantity = backendPosition.optDouble("quantity", 0.0)
                 val target = backendPosition.optDouble("target", 0.0)
-                val stop = backendPosition.optDouble("stop", 0.0)
+                val stop = backendPosition.optDouble("stop", 0.0),
+                                distributionPerShare = backendPosition.optDouble("distribution_per_share", 0.0)
 
                 positions = listOf(
                     SimPosition(
@@ -463,7 +465,8 @@ fun App() {
                         quantity = quantity,
                         price = entry,
                         target = target,
-                        stop = stop
+                        stop = stop,
+                        distributionPerShare = backendPosition.optDouble("distribution_per_share", 0.0)
                     )
                 )
 
@@ -489,10 +492,14 @@ fun App() {
                     cash = state.optDouble("cash", cash)
                     positions = emptyList()
                     status = "Paper position closed by backend"
-                    addLog("AUTO PAPER SELL confirmed by backend; cash £${"%.2f".format(cash)}")
+                    addLog("AUTO PAPER SELL confirmed by backend; cash USD ${"%.2f".format(cash)}")
                 } else {
                     val current = backendPosition.optDouble("current_price", p.price)
-                    positions = listOf(p.copy(price = current))
+                    cash = state.optDouble("cash", cash)
+                    positions = listOf(p.copy(price = current,
+                        target = backendPosition.optDouble("target", p.target),
+                        stop = backendPosition.optDouble("stop", p.stop),
+                        distributionPerShare = backendPosition.optDouble("distribution_per_share", 0.0)))
                     val quoteSource = backendPosition.optString("quote_source", "unknown")
                     val latestTradingDay = backendPosition.optString("latest_trading_day", "")
                     val monitoringStatus = backendPosition.optString("monitoring_status", "")
@@ -689,7 +696,7 @@ fun App() {
                                 if (open != null) {
                                     val value = open.quantity * open.price
                                     val cost = open.quantity * open.entry
-                                    val gain = value - cost
+                                    val gain = value + open.quantity * open.distributionPerShare - cost
                                     val gainPct =
                                         if (cost > 0.0) gain / cost * 100.0
                                         else 0.0
@@ -703,7 +710,7 @@ fun App() {
                                         "Paper price: ${"%.2f".format(open.price)} • ${quoteAgeLabel(positionQuoteTimestamp)}"
                                     )
                                     Text(
-                                        "Paper P/L: £${"%+.2f".format(gain)} " +
+                                        "Paper P/L: USD ${"%+.2f".format(gain)} " +
                                             "(${"%+.2f".format(gainPct)}%)",
                                         color = gainColor
                                     )
@@ -930,7 +937,8 @@ fun App() {
                     OutlinedTextField(profitTarget, { profitTarget = it }, label = { Text("Profit target %") })
                     OutlinedTextField(stopLoss, { stopLoss = it }, label = { Text("Stop loss %") })
                     OutlinedTextField(minScore, { minScore = it }, label = { Text("Minimum trend score") })
-                    Text("Paper cash: £${"%.2f".format(Locale.UK, cash)}")
+                    Text("Paper cash: USD ${"%.2f".format(Locale.UK, cash)}")
+                    Text("Gross USD simulation • distributions included • no tax or FX")
                 }
 
                 item {
@@ -996,7 +1004,8 @@ fun App() {
                     quantity = pos.getDouble("quantity"),
                     price = pos.getDouble("entry"),
                     target = pos.getDouble("target"),
-                    stop = pos.getDouble("stop")
+                    stop = pos.getDouble("stop"),
+                    distributionPerShare = pos.optDouble("distribution_per_share", 0.0)
                 )
             )
 
@@ -1024,13 +1033,13 @@ fun App() {
                             Text("Quantity ${"%.4f".format(p.quantity)}")
                             Text("Current ${"%.2f".format(p.price)}")
                             val paperGain =
-                                p.quantity * (p.price - p.entry)
+                                p.quantity * (p.price + p.distributionPerShare - p.entry)
                             val paperGainPct =
                                 if (p.entry > 0.0)
-                                    (p.price - p.entry) / p.entry * 100.0
+                                    (p.price + p.distributionPerShare - p.entry) / p.entry * 100.0
                                 else 0.0
                             Text(
-                                "P/L £${"%+.2f".format(paperGain)} " +
+                                "P/L USD ${"%+.2f".format(paperGain)} " +
                                     "(${"%+.2f".format(paperGainPct)}%)",
                                 color =
                                     if (paperGain >= 0.0)
@@ -1046,7 +1055,7 @@ fun App() {
                                         positions = emptyList()
                                         status = "Paper position closed"
                                         addLog(
-                                            "PAPER SELL confirmed by backend; cash £${"%.2f".format(cash)}"
+                                            "PAPER SELL confirmed by backend; cash USD ${"%.2f".format(cash)}"
                                         )
                                     } catch (e: Exception) {
                                         addLog("Paper sell failed: ${e.message}")

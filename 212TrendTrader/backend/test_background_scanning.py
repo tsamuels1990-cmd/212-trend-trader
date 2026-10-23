@@ -9,7 +9,8 @@ import server
 class BackgroundScanTests(unittest.IsolatedAsyncioTestCase):
     def setUp(self):
         self.state = server.default_paper_state()
-        self.state['position'] = {'symbol':'ELME','entry':100,'quantity':2,'target':104,'stop':98}
+        self.state['cash'] = 0.0
+        self.state['position'] = {'symbol':'TEST','entry':100,'quantity':2,'target':104,'stop':98}
         self.state_patch = patch.object(server, 'PAPER_STATE', self.state)
         self.state_patch.start()
         self.save_patch = patch.object(server, 'save_paper_state')
