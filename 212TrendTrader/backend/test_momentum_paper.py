@@ -134,5 +134,79 @@ class MomentumTests(unittest.TestCase):
         self.assertEqual(parsed["bars"][0]["time"], NOW-900)
 
 
+class SessionSafetyTests(unittest.TestCase):
+    def test_entry_cutoff_boundary_and_early_close(self):
+        for remaining, expected in [(4501, True), (4500, False), (4499, False), (600, False)]:
+            s, q = state(), snapshot()
+            q["session_end"] = NOW + remaining
+            step(s, {"AAA": q}, NOW)
+            self.assertEqual(bool(s["position"]), expected)
+        s, q = state(), snapshot()
+        s["config"]["max_hold_minutes"] = 90
+        q["session_end"] = NOW + 6000
+        step(s, {"AAA": q}, NOW)
+        self.assertIsNone(s["position"])
+
+    def holding(self):
+        s, q = state(), snapshot()
+        step(s, {"AAA": q}, NOW)
+        s["position"]["session_end"] = NOW + 600
+        return s
+
+    def test_session_close_uses_fresh_observed_price_and_no_rebuy(self):
+        s, q = self.holding(), snapshot()
+        q["session_end"] = NOW + 600
+        q["quote_time"] = NOW + 300
+        step(s, {"AAA": q}, NOW + 300)
+        self.assertIsNone(s["position"])
+        self.assertEqual(s["trades"][-1]["reason"], "SESSION_CLOSE")
+        self.assertAlmostEqual(s["cash"], s["trades"][-1]["quantity"] * q["price"] * .999)
+        self.assertIn("AAA", s["blocked"])
+
+    def test_close_not_triggered_before_boundary(self):
+        s, q = self.holding(), snapshot()
+        q["session_end"] = NOW + 600
+        q["quote_time"] = NOW + 299
+        step(s, {"AAA": q}, NOW + 299)
+        self.assertIsNotNone(s["position"])
+
+    def test_missing_quote_overdue_survives_reload_and_retries(self):
+        s = self.holding()
+        step(s, {}, NOW + 301)
+        self.assertIn("EXIT OVERDUE", s["status"])
+        self.assertIsNotNone(s["position"])
+        import json
+        s = json.loads(json.dumps(s))
+        q = snapshot()
+        q["quote_time"] = NOW + 302
+        step(s, {"AAA": q}, NOW + 302)
+        self.assertEqual(s["trades"][-1]["reason"], "SESSION_CLOSE")
+        self.assertNotIn("exit_pending", s)
+
+    def test_closed_market_never_fabricates_fill_and_retries_next_session(self):
+        s, q = self.holding(), snapshot()
+        q["session_end"] = NOW + 600
+        q["quote_time"] = NOW + 601
+        step(s, {"AAA": q}, NOW + 601)
+        self.assertIsNotNone(s["position"])
+        self.assertIn("EXIT OVERDUE", s["status"])
+        q["session_start"], q["session_end"] = NOW + 86400, NOW + 110000
+        q["quote_time"] = NOW + 86401
+        step(s, {"AAA": q}, NOW + 86401)
+        self.assertIsNone(s["position"])
+        self.assertEqual(s["trades"][-1]["reason"], "SESSION_CLOSE")
+
+    def test_timeout_stale_quote_marks_overdue_without_balance_change(self):
+        s, q = state(), snapshot()
+        step(s, {"AAA": q}, NOW)
+        old = copy.deepcopy(s["position"])
+        step(s, {"AAA": q}, NOW + 3601)
+        self.assertEqual(s["position"], old)
+        self.assertEqual(s["cash"], 0)
+        self.assertIn("EXIT OVERDUE (TIMEOUT)", s["status"])
+        q["quote_time"] = NOW + 3602
+        step(s, {"AAA": q}, NOW + 3602)
+        self.assertEqual(s["trades"][-1]["reason"], "TIMEOUT")
+
 if __name__ == "__main__":
     unittest.main()

@@ -6,6 +6,23 @@ The default starting balance is USD 1,000. It is not yet a matched comparison
 with the existing strategy: the universe, starting date and execution models
 differ. No profitability claim is made.
 
+## Session policy revision (v0.2, 30 October 2026)
+
+- Entries require more than the configured holding period plus 15 minutes before
+  the provider-reported regular session end (75 minutes with the current settings).
+- Positions record their entry session end. Five minutes before that close,
+  the runner attempts an exit using a fresh regular-session quote.
+- A timeout or session-close exit that cannot execute is persisted as
+  `exit_pending`; status starts with `EXIT OVERDUE`. The runner retries on later
+  polls and closes only on valid data. It never fabricates a fill at a stale price.
+- Existing v0.1 state is upgraded in place, preserving balances and closed trades.
+  `policy_changes` records the activation time, trade count and cash. Results before
+  and after this change must be evaluated separately. Old positions without a
+  recorded session end adopt the first available snapshot's session end; their
+  original timeout still applies.
+- This reduces overnight exposure but cannot guarantee liquidation during feed
+  outages or missed polls. Targets/stops remain triggers, not guaranteed loss caps.
+
 ## Experimental rules
 
 - A deliberately small fixed watchlist: AAPL, MSFT, NVDA, AMZN, META, GOOGL, TSLA.

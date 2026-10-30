@@ -9,7 +9,10 @@ from datetime import datetime, timezone
 from urllib.parse import quote
 from urllib.request import Request, urlopen
 
-VERSION = "momentum-paper-0.1"
+VERSION = "momentum-paper-0.2"
+LEGACY_VERSION = "momentum-paper-0.1"
+ENTRY_BUFFER_SECONDS = 15 * 60
+CLOSE_BUFFER_SECONDS = 5 * 60
 DEFAULT_SYMBOLS = "AAPL,MSFT,NVDA,AMZN,META,GOOGL,TSLA"
 
 
@@ -129,9 +132,22 @@ def step(state, snapshots, now):
     position = state["position"]
     if position:
         snapshot = snapshots.get(position["symbol"])
+        timeout_at = position["opened_at"] + config["max_hold_minutes"] * 60
+        session_end = position.get("session_end")
+        if session_end is None and snapshot:
+            session_end = snapshot.get("session_end")
+            if session_end is not None:
+                position["session_end"] = session_end
+        close_at = session_end - CLOSE_BUFFER_SECONDS if session_end is not None else None
+        due = ("SESSION_CLOSE" if close_at is not None and now >= close_at else
+               "TIMEOUT" if now >= timeout_at else None)
+        if due and not state.get("exit_pending"):
+            state["exit_pending"] = {"symbol": position["symbol"], "reason": due,
+                                     "since": now}
         reason = quote_reason(snapshot or {}, now)
         if reason:
-            state["status"] = reason
+            state["status"] = ("EXIT OVERDUE (" + state["exit_pending"]["reason"] + "): " + reason
+                               if state.get("exit_pending") else reason)
             return
         exit_price = snapshot["price"] * (1 - rate)
         proceeds = position["quantity"] * exit_price
@@ -139,7 +155,7 @@ def step(state, snapshots, now):
         state["equity"] = state["cash"] + proceeds
         reason = ("TARGET" if net_return >= config["target_pct"] else
                   "STOP" if net_return <= -config["stop_pct"] else
-                  "TIMEOUT" if now - position["opened_at"] >= config["max_hold_minutes"] * 60 else None)
+                  state["exit_pending"]["reason"] if state.get("exit_pending") else None)
         if reason:
             trade = dict(position, closed_at=now, exit_price=exit_price,
                          raw_exit_price=snapshot["price"], reason=reason,
@@ -148,6 +164,7 @@ def step(state, snapshots, now):
             state["cash"] += proceeds
             state["trades"].append(trade)
             state["position"] = None
+            state.pop("exit_pending", None)
             state["blocked"][position["symbol"]] = {"until": now + 1800,
                                                        "reset_after": position["signal_time"],
                                                        "reset_seen": None}
@@ -163,6 +180,9 @@ def step(state, snapshots, now):
             diagnostics[symbol] = "Data unavailable"
             continue
         signal = entry_signal(snapshot, now)
+        required = config["max_hold_minutes"] * 60 + ENTRY_BUFFER_SECONDS
+        if snapshot["session_end"] - now <= required:
+            signal = {"qualified": False, "reason": "Entry cutoff: holding period plus 15-minute buffer required"}
         diagnostics[symbol] = signal["reason"]
         block = state["blocked"].get(symbol)
         if block:
@@ -189,7 +209,8 @@ def step(state, snapshots, now):
         state["status"] = "No paper cash"
         return
     state["position"] = {"symbol": symbol, "opened_at": now,
-                         "entry_price": price, "raw_entry_price": raw,
+                         "session_end": snapshots[symbol]["session_end"],
+                          "entry_price": price, "raw_entry_price": raw,
                          "quantity": cash / price, "invested": cash,
                          "estimated_entry_cost": cash / price * raw * rate,
                          "signal_time": signal["signal_time"], "entry_signal": signal}
@@ -228,8 +249,15 @@ def main():
         except BlockingIOError:
             parser.error("Another runner already owns this state file")
         state = json.loads(args.state.read_text()) if args.state.exists() else new_state(args.seed, config)
-        if state["config"] != config or state["seed"] != args.seed or state["version"] != VERSION:
+        if state["config"] != config or state["seed"] != args.seed or state["version"] not in (VERSION, LEGACY_VERSION):
             parser.error("Configuration changed; use a different state file for a new experiment")
+        if state["version"] == LEGACY_VERSION:
+            state.setdefault("policy_changes", []).append({
+                "at": datetime.now(timezone.utc).isoformat(),
+                "from": LEGACY_VERSION, "to": VERSION,
+                "closed_trade_count": len(state["trades"]), "cash": state["cash"],
+                "policy": "Entry cutoff max hold + 15m; exit 5m before close; overdue exit retries"})
+            state["version"] = VERSION
         while True:
             started = time.time()
             # Outside regular hours, probe one symbol only, then sleep. No fabricated fills.
