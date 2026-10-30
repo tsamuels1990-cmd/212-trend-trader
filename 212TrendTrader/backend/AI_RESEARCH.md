@@ -11,10 +11,18 @@ Archive: runtime/intraday.sqlite (SQLite WAL; include WAL when backing up an
 active database, or use SQLite's backup API).
 Collector log and PID: runtime/collector.log and runtime/collector.pid.
 
-The collector is a detached low-priority process, not a system service.
-It continues independently of the Android app and SSH terminal, subject to host
-session policies; automatic restart after a crash or reboot is NOT configured.
-Do not launch a duplicate: a file lock protects the archive.
+The collector is a detached low-priority process supervised by the user's cron.
+An @reboot entry starts it after server boot and a per-minute watchdog restarts
+it if it exits. Recovery requires the host and cron daemon to be running.
+The watchdog checks the archive lock rather than trusting potentially stale PIDs;
+a second watchdog lock serialises launch checks. Existing trading workers are
+never inspected or restarted by this watchdog. No root service is installed.
+Watchdog events: runtime/watchdog.log; cron output: runtime/watchdog-cron.log.
+The managed crontab block is labelled BEGIN/END 212 AI COLLECTOR. Remove that
+block before intentionally stopping collection; otherwise cron restarts it.
+The prior crontab is saved in runtime/crontab.before-watchdog.txt.
+A process crash is recovered; a live but stalled process or repeated data-source
+errors are not automatically repaired. Inspect fetch logs for data health.
 
 ## Data
 
