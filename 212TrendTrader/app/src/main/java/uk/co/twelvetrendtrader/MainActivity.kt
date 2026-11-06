@@ -9,6 +9,8 @@ import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.material3.*
+import androidx.compose.material3.pulltorefresh.PullToRefreshBox
+import androidx.lifecycle.compose.LifecycleResumeEffect
 import androidx.compose.runtime.*
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.ui.graphics.Color
@@ -413,7 +415,11 @@ fun App() {
     var profitTarget by remember { mutableStateOf("4.0") }
     var stopLoss by remember { mutableStateOf("2.0") }
     var minScore by remember { mutableStateOf("75") }
-    var cash by remember { mutableStateOf(1000.0) }
+    var cash by remember { mutableStateOf(0.0) }
+    var refreshRequest by remember { mutableStateOf(0) }
+    var isRefreshing by remember { mutableStateOf(false) }
+    var paperLastSuccess by remember { mutableStateOf("Not yet updated") }
+    var paperRefreshError by remember { mutableStateOf("") }
     var status by remember { mutableStateOf("Paper mode — no real orders") }
     var scanning by remember { mutableStateOf(false) }
     var positions by remember { mutableStateOf(listOf<SimPosition>()) }
@@ -443,94 +449,16 @@ fun App() {
 
     fun addLog(s: String) { log = (log + s).takeLast(100) }
 
-    LaunchedEffect(Unit) {
-        runCatching {
-            backendPaperStatus()
-        }.onSuccess { state ->
-            cash = state.optDouble("cash", cash)
-            val backendPosition = state.optJSONObject("position")
-
-            if (backendPosition != null) {
-                val symbol = backendPosition.optString("symbol", "")
-                val entry = backendPosition.optDouble("entry", 0.0)
-                val quantity = backendPosition.optDouble("quantity", 0.0)
-                val target = backendPosition.optDouble("target", 0.0)
-                val stop = backendPosition.optDouble("stop", 0.0)
-
-                positions = listOf(
-                    SimPosition(
-                        ticker = symbol,
-                        entry = entry,
-                        quantity = quantity,
-                        price = entry,
-                        target = target,
-                        stop = stop,
-                        distributionPerShare = backendPosition.optDouble("distribution_per_share", 0.0)
-                    )
-                )
-
-                status = "Restored paper position: $symbol"
-                addLog("Restored backend paper position: $symbol")
-            }
-        }.onFailure { e ->
-            if (e is CancellationException) throw e
-            addLog("Paper account restore failed: ${e.message}")
-        }
+    // One account snapshot owns cash and the complete position, including after a rotation.
+    LifecycleResumeEffect(Unit) {
+        refreshRequest++
+        onPauseOrDispose { }
     }
 
-    LaunchedEffect(mode, positions.firstOrNull()?.ticker) {
-        while (mode == "PAPER" && positions.isNotEmpty()) {
-            val p = positions.first()
-
-            runCatching {
-                backendPaperCheck()
-            }.onSuccess { state ->
-                val backendPosition = state.optJSONObject("position")
-
-                if (backendPosition == null) {
-                    cash = state.optDouble("cash", cash)
-                    positions = emptyList()
-                    status = "Paper position closed by backend"
-                    addLog("AUTO PAPER SELL confirmed by backend; cash USD ${"%.2f".format(cash)}")
-                } else {
-                    val current = backendPosition.optDouble("current_price", p.price)
-                    cash = state.optDouble("cash", cash)
-                    positions = listOf(p.copy(price = current,
-                        target = backendPosition.optDouble("target", p.target),
-                        stop = backendPosition.optDouble("stop", p.stop),
-                        distributionPerShare = backendPosition.optDouble("distribution_per_share", 0.0)))
-                    val quoteSource = backendPosition.optString("quote_source", "unknown")
-                    val latestTradingDay = backendPosition.optString("latest_trading_day", "")
-                    val monitoringStatus = backendPosition.optString("monitoring_status", "")
-
-                    status = when (quoteSource) {
-                        "live" -> "FRESH QUOTE • ${p.ticker} @ ${"%.2f".format(current)} • automatic exits enabled"
-                        "cached" -> {
-                            val dateText = if (latestTradingDay.isNotBlank()) " • close $latestTradingDay" else ""
-                            "CACHED • ${p.ticker} @ ${"%.2f".format(current)}$dateText • automatic exits paused"
-                        }
-                        else -> {
-                            if (monitoringStatus.isNotBlank()) {
-                                "${p.ticker} @ ${"%.2f".format(current)} • $monitoringStatus"
-                            } else {
-                                "Monitoring ${p.ticker} @ ${"%.2f".format(current)}"
-                            }
-                        }
-                    }
-                }
-            }.onFailure { e ->
-                if (e is CancellationException) throw e
-                addLog("Price monitor failed: ${e.message}")
-            }
-
-            delay(60000)
-        }
-    }
-
-
-    LaunchedEffect(mode) {
+    LaunchedEffect(mode, refreshRequest) {
         if (mode == "PAPER") {
             while (true) {
+                isRefreshing = true
                 runCatching {
                     backendPaperAutomationStatus()
                 }.onSuccess { state ->
@@ -596,6 +524,11 @@ fun App() {
                     automationLastUpdated =
                         SimpleDateFormat("HH:mm:ss", Locale.UK).format(Date())
                     automationLoaded = true
+                    paperLastSuccess = automationLastUpdated
+                    paperRefreshError = ""
+                    val open = positions.firstOrNull()
+                    status = if (open == null) "Paper account updated • no open position"
+                        else "${open.ticker} • ${backendPosition?.optString("monitoring_status", "Quote status unavailable")}"
 
                     if (!firstLoad &&
                         automationLastAction != previousAction
@@ -605,17 +538,20 @@ fun App() {
                 }.onFailure { e ->
                     if (e is CancellationException) throw e
                     automationLastUpdated = "Connection failed"
+                    paperRefreshError = "Refresh failed — showing the last received balance"
                     addLog("Automation refresh failed: ${e.message}")
                 }
 
+                isRefreshing = false
                 delay(30000)
             }
         }
     }
 
-    LaunchedEffect(mode) {
+    LaunchedEffect(mode, refreshRequest) {
         if (mode == "LIVE") {
             while (true) {
+                isRefreshing = true
                 runCatching {
                     val positions = backendLivePositions()
                     val summary = backendLiveAccountSummary()
@@ -631,6 +567,7 @@ fun App() {
                     addLog("Live portfolio auto-refresh failed: ${e.message}")
                 }
 
+                isRefreshing = false
                 delay(60000)
             }
         }
@@ -643,8 +580,13 @@ fun App() {
                 TopAppBar(title = { Text("212 Trend Trader") })
             }
         ) { pad ->
+            PullToRefreshBox(
+                isRefreshing = isRefreshing,
+                onRefresh = { if (!isRefreshing) refreshRequest++ },
+                modifier = Modifier.fillMaxSize().padding(pad)
+            ) {
             LazyColumn(
-                modifier = Modifier.fillMaxSize().padding(pad).padding(16.dp),
+                modifier = Modifier.fillMaxSize().padding(16.dp),
                 verticalArrangement = Arrangement.spacedBy(12.dp)
             ) {
                 item {
@@ -662,6 +604,27 @@ fun App() {
                 }
 
                 if (mode == "PAPER") {
+                    item {
+                        Card(Modifier.fillMaxWidth()) {
+                            Column(Modifier.padding(12.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
+                                val holdingValue = positions.sumOf { it.quantity * it.price }
+                                Text("PAPER ACCOUNT", style = MaterialTheme.typography.titleMedium)
+                                Text(
+                                    if (automationLoaded) "USD ${"%.2f".format(Locale.UK, cash + holdingValue)}" else "Loading…",
+                                    style = MaterialTheme.typography.headlineMedium
+                                )
+                                if (automationLoaded) {
+                                    Text("Available cash: USD ${"%.2f".format(Locale.UK, cash)}")
+                                    Text("Holdings value: USD ${"%.2f".format(Locale.UK, holdingValue)}")
+                                }
+                                Text("Balance received: $paperLastSuccess")
+                                positionQuoteTimestamp?.let { Text("Holding quote: ${quoteAgeLabel(it)}") }
+                                if (paperRefreshError.isNotBlank()) Text(paperRefreshError, color = MaterialTheme.colorScheme.error)
+                                Text("Pull down to refresh • updates every 30 seconds", style = MaterialTheme.typography.bodySmall)
+                                Text("Paper values are gross, before tax and FX costs", style = MaterialTheme.typography.bodySmall)
+                            }
+                        }
+                    }
                     item {
                         Card(Modifier.fillMaxWidth()) {
                             Column(
@@ -1097,6 +1060,7 @@ fun App() {
                     Text("EVENT LOG", style = MaterialTheme.typography.titleLarge)
                     log.takeLast(20).forEach { Text(it, style = MaterialTheme.typography.bodySmall) }
                 }
+            }
             }
         }
     }
